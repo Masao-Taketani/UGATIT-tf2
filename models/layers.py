@@ -68,7 +68,7 @@ class ResnetBlock(tf.keras.layers.Layer):
         x = self.conv2d_2(x)
         x = self.instance_norm_2(x)
 
-        return x
+        return x + inputs
 
 
 class ResnetAdaLINBlock(tf.keras.layers.Layer):
@@ -81,7 +81,7 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
                                                use_bias=use_bias, 
                                                kernel_initializer=KERNEL_INIT,
                                                kernel_regularizer=KERNEL_REG)
-        self.instance_norm_1 = tfa.layers.InstanceNormalization()
+        self.adalin_1 = AdaLIN()
         self.relu = tf.keras.layers.ReLU()
         self.conv2d_2 = tf.keras.layers.Conv2D(filters=dim, 
                                                kernel_size=3, 
@@ -89,18 +89,18 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
                                                use_bias=use_bias, 
                                                kernel_initializer=KERNEL_INIT,
                                                kernel_regularizer=KERNEL_REG)
-        self.instance_norm_2 = tfa.layers.InstanceNormalization()
+        self.adalin_2 = AdaLIN()
 
     def call(self, inputs):
         x = reflection_pad_2d(inputs, 1)
         x = self.conv2d_1(x)
-        x = self.instance_norm_1(x)
+        x = self.adalin_1(x)
         x = self.relu(x)
         x = reflection_pad_2d(x, 1)
         x = self.conv2d_2(x)
-        x = self.instance_norm_2(x)
+        x = self.adalin_2(x)
 
-        return x        
+        return x + inputs   
 
 
 class AdaLIN(tf.keras.layers.Layer):
@@ -119,7 +119,7 @@ class Upsample(tf.keras.layers.Layer):
 
 class Generator(tf.keras.Layers.Layer):
 
-    def __init__(self, first_filters=64, name="Generator"):
+    def __init__(self, first_filters=64, img_size=256, name="Generator"):
         super(Generator, self).__init__(name=name)
         # Used for Encoder Down-sampling part
         self.downsample_1 = Downsample(pad=3, 
@@ -165,6 +165,24 @@ class Generator(tf.keras.Layers.Layer):
                                               kernel_regularizer=KERNEL_REG)
         self.relu = tf.keras.layers.ReLU()
         # Used for Gamma, Beta part
+        self.Dense_1 = tf.keras.layers.Dense(4 * first_filters,
+                                             use_bias=False, 
+                                             kernel_initializer=KERNEL_INIT,
+                                             kernel_regularizer=KERNEL_REG)
+        self.relu_1 = tf.keras.layers.ReLU()
+        self.Dense_2 = tf.keras.layers.Dense(4 * first_filters,
+                                             use_bias=False, 
+                                             kernel_initializer=KERNEL_INIT,
+                                             kernel_regularizer=KERNEL_REG)
+        self.relu_2 = tf.keras.layers.ReLU()
+        self.gamma = tf.keras.layers.Dense(4 * first_filters,
+                                           use_bias=False, 
+                                           kernel_initializer=KERNEL_INIT,
+                                           kernel_regularizer=KERNEL_REG)
+        self.bias = tf.keras.layers.Dense(4 * first_filters,
+                                          use_bias=False, 
+                                          kernel_initializer=KERNEL_INIT,
+                                          kernel_regularizer=KERNEL_REG)
 
         # Uesd for Decoder Bottleneck part
-
+        
