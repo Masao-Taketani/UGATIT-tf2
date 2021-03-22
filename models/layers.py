@@ -106,7 +106,11 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
 class AdaLIN(tf.keras.layers.Layer):
 
     def __init__(self, dim, use_bias):
-        super(self, )
+        super(AdaLIN, self).__init__()
+        self.epsilon = 1e-5
+
+        
+
 
 
 class Upsample(tf.keras.layers.Layer):
