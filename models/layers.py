@@ -104,13 +104,34 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
 
 
 class AdaLIN(tf.keras.layers.Layer):
+    """
+    Referred to the following pages.
+    [Batch Normalization, Instance Normalization, Layer Normalization: Structural Nuances](https://becominghuman.ai/all-about-normalization-6ea79e70894b)
+    [tf.Variable](https://www.tensorflow.org/api_docs/python/tf/Variable)
+    [taki0112/UGATIT](https://github.com/taki0112/UGATIT/blob/d508e8f5188e47000d79d8aecada0cc9119e0d56/ops.py#L179)
+    [znxlwm/UGATIT-pytorch](https://github.com/znxlwm/UGATIT-pytorch/blob/b8c4251823673189999484d07e97fdcb9300e9e0/networks.py#L157)
+    """
 
-    def __init__(self, dim, use_bias):
+    def __init__(self, ch_dims, init_val):
         super(AdaLIN, self).__init__()
         self.epsilon = 1e-5
+        self.rho = tf.Variable(initial_value=init_val, 
+                               trainable=True, 
+                               name="rho", 
+                               constraint=lambda v: tf.clip_by_value(v, 
+                                                                     clip_value_min=0.0, 
+                                                                     clip_value_max=1.0)
+                               shape=ch_dims)
 
-        
+    def call(self, inputs, gamma, beta):
+        in_mean, in_var = tf.nn.moments(inputs, axes=[1, 2], keepdims=True)
+        in_out = (inputs - in_mean) / tf.sqrt(in_var + self.epsilon)
+        ln_mean, ln_var = tf.nn.moments(inputs, axes=[1, 2, 3], keepdims=True)
+        ln_out = (inputs - ln_mean) / tf.sqrt(ln_var + self.epsilon)
+        out = self.rho * in_out + (1 - self.rho) * ln_out
+        out = out * gamma + beta
 
+        return out
 
 
 class Upsample(tf.keras.layers.Layer):
