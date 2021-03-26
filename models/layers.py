@@ -53,10 +53,13 @@ def Upsample(tf.keras.layers.Layer):
                  filters, 
                  kernel_size, 
                  strides, 
-                 use_bias, 
-                 name="Downsample"):
+                 use_bias,
+                 use_upsample_imgs=True,
+                 use_relu=True
+                 name="Upsample"):
         super(Downsample, self).__init__(name=name)
-
+        
+        self.use_ups = use_upsample_imgs
         self.pad = pad
         self.conv2d = tf.keras.layers.Conv2D(filters=filters, 
                                              kernel_size=kernel_size, 
@@ -65,14 +68,19 @@ def Upsample(tf.keras.layers.Layer):
                                              kernel_initializer=KERNEL_INIT,
                                              kernel_regularizer=KERNEL_REG)
         self.lin = LIN(filters)
-        self.relu = tf.keras.layers.ReLU()
+        if use_relu:
+            self.activation = tf.keras.layers.ReLU()
+        else:
+            self.activation = tf.keras.activations.tanh
 
     def call(self, inputs):
-        x = upsample_images(inputs)
+        x = inputs
+        if self.use_ups:
+            x = upsample_images(x)
         x = reflection_pad_2d(x, self.pad)
         x = self.conv2d(x)
         x = self.lin(x)
-        x = self.relu(x)
+        x = self.activation(x)
 
         return x
 
@@ -217,16 +225,14 @@ class Generator(tf.keras.Layers.Layer):
                                        filters=first_filters, 
                                        kernel_size=7, 
                                        strides=1, 
-                                       use_bias=False,
-                                       kernel_init=kernel_init,
-                                       kernel_reg=kernel_reg)
+                                       use_bias=False)
         self.downsample_2 = Downsample(pad=1,
-                                       filters= 2 * first_filters,
+                                       filters=2 * first_filters,
                                        kernel_size=3,
                                        strides=2,
                                        use_bias=False)
         self.downsample_3 = Downsample(pad=1,
-                                       filters= 4 * first_filters,
+                                       filters=4 * first_filters,
                                        kernel_size=3,
                                        strides=2,
                                        use_bias=False)
@@ -242,6 +248,8 @@ class Generator(tf.keras.Layers.Layer):
                                           use_bias=False)
 
         # Used for CAM of Generator part
+        self.global_avg_pool = tf.keras.layers.GlobalAveragePooling2D()
+        sekf,global_max_pool = tf.keras.layers.GlobalMaxPool2D()
         self.gap_fc = tf.keras.layers.Dense(units=1, 
                                             use_bias=False, 
                                             kernel_initializer=KERNEL_INIT,
@@ -289,3 +297,32 @@ class Generator(tf.keras.Layers.Layer):
                                                        use_bias=False)
         
         # used for Decoder Up-sampling part
+        self.upsample_1 = Upsample(pad=1, 
+                                   filters=2 * first_filters, 
+                                   kernel_size=3, 
+                                   strides=1, 
+                                   use_bias=False)
+        self.upsample_2 = Upsample(pad=1, 
+                                   filters=2 * first_filters, 
+                                   kernel_size=3, 
+                                   strides=1, 
+                                   use_bias=False)
+        self.upsample_3 = Upsample(pad=3, 
+                                   filters=3, 
+                                   kernel_size=7, 
+                                   strides=1, 
+                                   use_bias=False,
+                                   use_upsample_imgs=False,
+                                   use_relu=False)
+
+    def call(self, inputs):
+        x = self.downsample_1(inputs)
+        x = self.downsample_2(x)
+        x = self.downsample_3(x)
+        x = self.resnet_block_1(x)
+        x = self.resnet_block_2(x)
+        x = self.resnet_block_3(x)
+        x = self.resnet_block_4(x)
+        gap = self.global_avg_pool(x)
+        gap_logit = self.gap_fc(flatten(gap))
+        gap_weight = 
