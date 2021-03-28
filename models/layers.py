@@ -119,10 +119,10 @@ class ResnetBlock(tf.keras.layers.Layer):
 
 class ResnetAdaLINBlock(tf.keras.layers.Layer):
 
-    def __init__(self, dim, use_bias, smooth=True, name="ResnetAdaLINBlock"):
+    def __init__(self, dim, use_bias, smoothing=True, name="ResnetAdaLINBlock"):
         super(ResnetAdaLINBlock, self).__init__(name=name)
 
-        init_val = 0.9 if smooth else 0.1
+        init_val = 0.9 if smoothing else 1.0
 
         self.conv2d_1 = tf.keras.layers.Conv2D(filters=dim, 
                                                kernel_size=3, 
@@ -249,7 +249,7 @@ class Generator(tf.keras.Layers.Layer):
 
         # Used for CAM of Generator part
         self.global_avg_pool = tf.keras.layers.GlobalAveragePooling2D()
-        sekf,global_max_pool = tf.keras.layers.GlobalMaxPool2D()
+        self.global_max_pool = tf.keras.layers.GlobalMaxPool2D()
         self.gap_fc = tf.keras.layers.Dense(units=1, 
                                             use_bias=False, 
                                             kernel_initializer=KERNEL_INIT,
@@ -264,24 +264,24 @@ class Generator(tf.keras.Layers.Layer):
                                               use_bias=True,
                                               kernel_initializer=KERNEL_INIT,
                                               kernel_regularizer=KERNEL_REG)
-        self.relu = tf.keras.layers.ReLU()
+        self.relu_1 = tf.keras.layers.ReLU()
 
         # Used for Gamma, Beta part
-        self.Dense_1 = tf.keras.layers.Dense(4 * first_filters,
-                                             use_bias=False, 
-                                             kernel_initializer=KERNEL_INIT,
-                                             kernel_regularizer=KERNEL_REG)
-        self.relu_1 = tf.keras.layers.ReLU()
-        self.Dense_2 = tf.keras.layers.Dense(4 * first_filters,
+        self.dense_1 = tf.keras.layers.Dense(4 * first_filters,
                                              use_bias=False, 
                                              kernel_initializer=KERNEL_INIT,
                                              kernel_regularizer=KERNEL_REG)
         self.relu_2 = tf.keras.layers.ReLU()
+        self.dense_2 = tf.keras.layers.Dense(4 * first_filters,
+                                             use_bias=False, 
+                                             kernel_initializer=KERNEL_INIT,
+                                             kernel_regularizer=KERNEL_REG)
+        self.relu_3 = tf.keras.layers.ReLU()
         self.gamma = tf.keras.layers.Dense(4 * first_filters,
                                            use_bias=False, 
                                            kernel_initializer=KERNEL_INIT,
                                            kernel_regularizer=KERNEL_REG)
-        self.bias = tf.keras.layers.Dense(4 * first_filters,
+        self.beta = tf.keras.layers.Dense(4 * first_filters,
                                           use_bias=False, 
                                           kernel_initializer=KERNEL_INIT,
                                           kernel_regularizer=KERNEL_REG)
@@ -319,10 +319,41 @@ class Generator(tf.keras.Layers.Layer):
         x = self.downsample_1(inputs)
         x = self.downsample_2(x)
         x = self.downsample_3(x)
+
         x = self.resnet_block_1(x)
         x = self.resnet_block_2(x)
         x = self.resnet_block_3(x)
         x = self.resnet_block_4(x)
+
         gap = self.global_avg_pool(x)
-        gap_logit = self.gap_fc(flatten(gap))
-        gap_weight = 
+        gap_logit = self.gap_fc(gap)
+        gap_weight = self.gap_fc.trainable_variables[0][0]
+        gap = x * gap_weight
+
+        gmp = self.global_max_pool(x)
+        gmp_logit = self.gmp_fc(gmp)
+        gmp_weight = self.gmp_fc.trainable_variables[0][0]
+        gmp = x * gmp_weight
+
+        cam_logit = tf.concat([gap_logit, gmp_logit], axis=1)
+        x = tf.concat([gap, gmp], axis=3)
+        x = self.relu_1(self.conv1x1(x))
+
+        heatmap = tf.math.reduce_sum(x, axis=3, keepdims=True)
+
+        x_ = self.dense_1(tf.reshape(x, [x.shape[0], -1]))
+        x_ = self.relu_2(x_)
+        x_ = self.dense_2(x_)
+        x_ = self.relu_3(x_)
+        gamma, beta = self.gamma(x_), self.beta(x_)
+
+        x = self.resnet_adalin_block_1(x, gamma, beta)
+        x = self.resnet_adalin_block_2(x, gamma, beta)
+        x = self.resnet_adalin_block_3(x, gamma, beta)
+        x = self.resnet_adalin_block_4(x, gamma, beta)
+
+        x = upsample_1(x)
+        x = upsample_2(x)
+        out = upsample_3(x)
+
+        return out, cam_logit, heatmap
