@@ -13,7 +13,7 @@ def reflection_pad_2d(inputs, pad):
 def upsample_images(x, scale_factor=2):
     _, h, w, _ = x.shape
     new_size = [h * scale_factor, w * scale_factor]
-    tf.image.resize(x, size=new_size, method="nearest")
+    return tf.image.resize(x, size=new_size, method="nearest")
 
 
 class Downsample(tf.keras.layers.Layer):
@@ -46,7 +46,7 @@ class Downsample(tf.keras.layers.Layer):
         return x
 
 
-def Upsample(tf.keras.layers.Layer):
+class Upsample(tf.keras.layers.Layer):
 
     def __init__(self, 
                  pad, 
@@ -55,9 +55,9 @@ def Upsample(tf.keras.layers.Layer):
                  strides, 
                  use_bias,
                  use_upsample_imgs=True,
-                 use_relu=True
+                 use_relu=True,
                  name="Upsample"):
-        super(Downsample, self).__init__(name=name)
+        super(Upsample, self).__init__(name=name)
         
         self.use_ups = use_upsample_imgs
         self.pad = pad
@@ -152,7 +152,7 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
         return x + inputs   
 
 
-class AdaLIN(tf.keras.layers.Layer, name="AdaLIN"):
+class AdaLIN(tf.keras.layers.Layer):
     """
     Referred to the following pages.
     [Batch Normalization, Instance Normalization, Layer Normalization: Structural Nuances](https://becominghuman.ai/all-about-normalization-6ea79e70894b)
@@ -161,7 +161,7 @@ class AdaLIN(tf.keras.layers.Layer, name="AdaLIN"):
     [znxlwm/UGATIT-pytorch](https://github.com/znxlwm/UGATIT-pytorch/blob/b8c4251823673189999484d07e97fdcb9300e9e0/networks.py#L157)
     """
 
-    def __init__(self, dim, init_val):
+    def __init__(self, dim, init_val, name="AdaLIN"):
         super(AdaLIN, self).__init__(name=name)
         self.epsilon = 1e-5
         self.rho = tf.Variable(initial_value=init_val, 
@@ -169,8 +169,8 @@ class AdaLIN(tf.keras.layers.Layer, name="AdaLIN"):
                                name="rho", 
                                constraint=lambda v: tf.clip_by_value(v, 
                                                                      clip_value_min=0.0, 
-                                                                     clip_value_max=1.0)
-                               shape=dim)
+                                                                     clip_value_max=1.0),)
+                               #shape=dim)
 
     def call(self, inputs, gamma, beta):
         in_mean, in_var = tf.nn.moments(inputs, axes=[1, 2], keepdims=True)
@@ -183,26 +183,26 @@ class AdaLIN(tf.keras.layers.Layer, name="AdaLIN"):
         return out
 
 
-class LIN(tf.keras.layers.Layer, name="LIN"):
+class LIN(tf.keras.layers.Layer):
 
-    def __init__(self, dim):
-        super(AdaLIN, self).__init__(name=name)
+    def __init__(self, dim, name="LIN"):
+        super(LIN, self).__init__(name=name)
         self.epsilon = 1e-5
         self.rho = tf.Variable(initial_value=0.0, 
                                trainable=True, 
                                name="rho", 
                                constraint=lambda v: tf.clip_by_value(v, 
                                                                      clip_value_min=0.0, 
-                                                                     clip_value_max=1.0)
-                               shape=ch_dims)
+                                                                     clip_value_max=1.0),)
+                               #shape=dim)
         self.gamma = tf.Variable(initial_value=1.0, 
                                  trainable=True, 
-                                 name="gamma", 
-                                 shape=ch_dims)
+                                 name="gamma",)
+                                 #shape=dim)
         self.beta = tf.Variable(initial_value=0.0, 
                                  trainable=True, 
-                                 name="beta", 
-                                 shape=ch_dims)
+                                 name="beta",) 
+                                 #shape=dim)
 
     def call(self, inputs):
         in_mean, in_var = tf.nn.moments(inputs, axes=[1, 2], keepdims=True) # shape [N, 1, 1, C]
@@ -215,11 +215,12 @@ class LIN(tf.keras.layers.Layer, name="LIN"):
         return out
 
 
-class Generator(tf.keras.Layers.Layer):
+class Generator(tf.keras.layers.Layer):
 
     def __init__(self, first_filters=64, img_size=256, name="Generator"):
         super(Generator, self).__init__(name=name)
 
+        self.img_size = img_size
         # Used for Encoder Down-sampling part
         self.downsample_1 = Downsample(pad=3, 
                                        filters=first_filters, 
@@ -267,6 +268,7 @@ class Generator(tf.keras.Layers.Layer):
         self.relu_1 = tf.keras.layers.ReLU()
 
         # Used for Gamma, Beta part
+        self.flatten = tf.keras.layers.Flatten()
         self.dense_1 = tf.keras.layers.Dense(4 * first_filters,
                                              use_bias=False, 
                                              kernel_initializer=KERNEL_INIT,
@@ -340,8 +342,7 @@ class Generator(tf.keras.Layers.Layer):
         x = self.relu_1(self.conv1x1(x))
 
         heatmap = tf.math.reduce_sum(x, axis=3, keepdims=True)
-
-        x_ = self.dense_1(tf.reshape(x, [x.shape[0], -1]))
+        x_ = self.dense_1(self.flatten(x))
         x_ = self.relu_2(x_)
         x_ = self.dense_2(x_)
         x_ = self.relu_3(x_)
@@ -352,8 +353,18 @@ class Generator(tf.keras.Layers.Layer):
         x = self.resnet_adalin_block_3(x, gamma, beta)
         x = self.resnet_adalin_block_4(x, gamma, beta)
 
-        x = upsample_1(x)
-        x = upsample_2(x)
-        out = upsample_3(x)
+        x = self.upsample_1(x)
+        x = self.upsample_2(x)
+        out = self.upsample_3(x)
 
         return out, cam_logit, heatmap
+
+    def summary(self):
+        x = tf.keras.layers.Input(shape=(self.img_size, self.img_size, 3))
+        model = tf.keras.Model(inputs=[x], outputs=self.call(x), name=self.name)
+        return model.summmary()
+
+
+if __name__ == "__main__":
+    test_generator = Generator()
+    test_generator.summary()
