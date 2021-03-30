@@ -24,7 +24,7 @@ class Downsample(tf.keras.layers.Layer):
                  kernel_size, 
                  strides, 
                  use_bias, 
-                 name="Downsample"):
+                 name="downsample"):
         super(Downsample, self).__init__(name=name)
 
         self.pad = pad
@@ -56,7 +56,7 @@ class Upsample(tf.keras.layers.Layer):
                  use_bias,
                  use_upsample_imgs=True,
                  use_relu=True,
-                 name="Upsample"):
+                 name="upsample"):
         super(Upsample, self).__init__(name=name)
         
         self.use_ups = use_upsample_imgs
@@ -87,7 +87,7 @@ class Upsample(tf.keras.layers.Layer):
 
 class ResnetBlock(tf.keras.layers.Layer):
 
-    def __init__(self, dim, use_bias, name="ResnetBlock"):
+    def __init__(self, dim, use_bias, name="resnet_block"):
         super(ResnetBlock, self).__init__(name=name)
         self.conv2d_1 = tf.keras.layers.Conv2D(filters=dim, 
                                                kernel_size=3, 
@@ -119,7 +119,7 @@ class ResnetBlock(tf.keras.layers.Layer):
 
 class ResnetAdaLINBlock(tf.keras.layers.Layer):
 
-    def __init__(self, dim, use_bias, smoothing=True, name="ResnetAdaLINBlock"):
+    def __init__(self, dim, use_bias, smoothing=True, name="resnet_adalin_block"):
         super(ResnetAdaLINBlock, self).__init__(name=name)
 
         init_val = 0.9 if smoothing else 1.0
@@ -161,7 +161,7 @@ class AdaLIN(tf.keras.layers.Layer):
     [znxlwm/UGATIT-pytorch](https://github.com/znxlwm/UGATIT-pytorch/blob/b8c4251823673189999484d07e97fdcb9300e9e0/networks.py#L157)
     """
 
-    def __init__(self, dim, init_val, name="AdaLIN"):
+    def __init__(self, dim, init_val, name="adalin"):
         super(AdaLIN, self).__init__(name=name)
         self.epsilon = 1e-5
         self.rho = tf.Variable(initial_value=init_val, 
@@ -185,7 +185,7 @@ class AdaLIN(tf.keras.layers.Layer):
 
 class LIN(tf.keras.layers.Layer):
 
-    def __init__(self, dim, name="LIN"):
+    def __init__(self, dim, name="lin"):
         super(LIN, self).__init__(name=name)
         self.epsilon = 1e-5
         self.rho = tf.Variable(initial_value=0.0, 
@@ -217,7 +217,7 @@ class LIN(tf.keras.layers.Layer):
 
 class Generator(tf.keras.layers.Layer):
 
-    def __init__(self, first_filters=64, img_size=256, name="Generator"):
+    def __init__(self, first_filters=64, img_size=256, name="generator"):
         super(Generator, self).__init__(name=name)
 
         self.img_size = img_size
@@ -226,27 +226,34 @@ class Generator(tf.keras.layers.Layer):
                                        filters=first_filters, 
                                        kernel_size=7, 
                                        strides=1, 
-                                       use_bias=False)
+                                       use_bias=False,
+                                       name="g_downsample_1")
         self.downsample_2 = Downsample(pad=1,
                                        filters=2 * first_filters,
                                        kernel_size=3,
                                        strides=2,
-                                       use_bias=False)
+                                       use_bias=False,
+                                       name="g_downsample_2")
         self.downsample_3 = Downsample(pad=1,
                                        filters=4 * first_filters,
                                        kernel_size=3,
                                        strides=2,
-                                       use_bias=False)
+                                       use_bias=False,
+                                       name="g_downsample_3")
 
         # Used for Encoder Bottleneck part
         self.resnet_block_1 = ResnetBlock(4 * first_filters,
-                                          use_bias=False)
+                                          use_bias=False,
+                                          name="g_resnet_block_1")
         self.resnet_block_2 = ResnetBlock(4 * first_filters,
-                                          use_bias=False)
+                                          use_bias=False,
+                                          name="g_resnet_block_2")
         self.resnet_block_3 = ResnetBlock(4 * first_filters,
-                                          use_bias=False)
+                                          use_bias=False,
+                                          name="g_resnet_block_3")
         self.resnet_block_4 = ResnetBlock(4 * first_filters,
-                                          use_bias=False)
+                                          use_bias=False,
+                                          name="g_resnet_block_4")
 
         # Used for CAM of Generator part
         self.global_avg_pool = tf.keras.layers.GlobalAveragePooling2D()
@@ -254,17 +261,20 @@ class Generator(tf.keras.layers.Layer):
         self.gap_fc = tf.keras.layers.Dense(units=1, 
                                             use_bias=False, 
                                             kernel_initializer=KERNEL_INIT,
-                                            kernel_regularizer=KERNEL_REG)
+                                            kernel_regularizer=KERNEL_REG,
+                                            name="g_gap_fc")
         self.gmp_fc = tf.keras.layers.Dense(units=1, 
                                             use_bias=False, 
                                             kernel_initializer=KERNEL_INIT,
-                                            kernel_regularizer=KERNEL_REG)
+                                            kernel_regularizer=KERNEL_REG,
+                                            name="g_gmp_fc")
         self.conv1x1 = tf.keras.layers.Conv2D(filters=4 * first_filters,
                                               kernel_size=1,
                                               strides=1,
                                               use_bias=True,
                                               kernel_initializer=KERNEL_INIT,
-                                              kernel_regularizer=KERNEL_REG)
+                                              kernel_regularizer=KERNEL_REG,
+                                              name="g_conv1x1")
         self.relu_1 = tf.keras.layers.ReLU()
 
         # Used for Gamma, Beta part
@@ -282,40 +292,49 @@ class Generator(tf.keras.layers.Layer):
         self.gamma = tf.keras.layers.Dense(4 * first_filters,
                                            use_bias=False, 
                                            kernel_initializer=KERNEL_INIT,
-                                           kernel_regularizer=KERNEL_REG)
+                                           kernel_regularizer=KERNEL_REG,
+                                           name="g_gamma")
         self.beta = tf.keras.layers.Dense(4 * first_filters,
                                           use_bias=False, 
                                           kernel_initializer=KERNEL_INIT,
-                                          kernel_regularizer=KERNEL_REG)
+                                          kernel_regularizer=KERNEL_REG,
+                                           name="g_beta")
 
         # Uesd for Decoder Bottleneck part
         self.resnet_adalin_block_1 = ResnetAdaLINBlock(4 * first_filters,
-                                                       use_bias=False)
+                                                       use_bias=False,
+                                                       name="g_resnet_adalin_block_1")
         self.resnet_adalin_block_2 = ResnetAdaLINBlock(4 * first_filters,
-                                                       use_bias=False)
+                                                       use_bias=False,
+                                                       name="g_resnet_adalin_block_2")
         self.resnet_adalin_block_3 = ResnetAdaLINBlock(4 * first_filters,
-                                                       use_bias=False)
+                                                       use_bias=False,
+                                                       name="g_resnet_adalin_block_3")
         self.resnet_adalin_block_4 = ResnetAdaLINBlock(4 * first_filters,
-                                                       use_bias=False)
+                                                       use_bias=False,
+                                                       name="g_resnet_adalin_block_4")
         
         # used for Decoder Up-sampling part
         self.upsample_1 = Upsample(pad=1, 
                                    filters=2 * first_filters, 
                                    kernel_size=3, 
                                    strides=1, 
-                                   use_bias=False)
+                                   use_bias=False,
+                                   name="g_upsample_1")
         self.upsample_2 = Upsample(pad=1, 
                                    filters=2 * first_filters, 
                                    kernel_size=3, 
                                    strides=1, 
-                                   use_bias=False)
+                                   use_bias=False,
+                                   name="g_upsample_2")
         self.upsample_3 = Upsample(pad=3, 
                                    filters=3, 
                                    kernel_size=7, 
                                    strides=1, 
                                    use_bias=False,
                                    use_upsample_imgs=False,
-                                   use_relu=False)
+                                   use_relu=False,
+                                   name="g_upsample_3")
 
     def call(self, inputs):
         x = self.downsample_1(inputs)
@@ -362,7 +381,7 @@ class Generator(tf.keras.layers.Layer):
     def summary(self):
         x = tf.keras.layers.Input(shape=(self.img_size, self.img_size, 3))
         model = tf.keras.Model(inputs=[x], outputs=self.call(x), name=self.name)
-        return model.summmary()
+        return model.summary()
 
 
 if __name__ == "__main__":
