@@ -219,9 +219,8 @@ class Generator(tf.keras.layers.Layer):
 
     def __init__(self, first_filters=64, img_size=256, name="generator"):
         super(Generator, self).__init__(name=name)
-
         self.img_size = img_size
-        # Used for Encoder Down-sampling part
+        # Encoder Down-sampling parts
         self.downsample_1 = Downsample(pad=3, 
                                        filters=first_filters, 
                                        kernel_size=7, 
@@ -241,7 +240,7 @@ class Generator(tf.keras.layers.Layer):
                                        use_bias=False,
                                        name="g_downsample_3")
 
-        # Used for Encoder Bottleneck part
+        # Encoder Bottleneck parts
         self.resnet_block_1 = ResnetBlock(4 * first_filters,
                                           use_bias=False,
                                           name="g_resnet_block_1")
@@ -255,7 +254,7 @@ class Generator(tf.keras.layers.Layer):
                                           use_bias=False,
                                           name="g_resnet_block_4")
 
-        # Used for CAM of Generator part
+        # CAM of Generator parts
         self.global_avg_pool = tf.keras.layers.GlobalAveragePooling2D()
         self.global_max_pool = tf.keras.layers.GlobalMaxPool2D()
         self.gap_fc = tf.keras.layers.Dense(units=1, 
@@ -277,7 +276,7 @@ class Generator(tf.keras.layers.Layer):
                                               name="g_conv1x1")
         self.relu_1 = tf.keras.layers.ReLU()
 
-        # Used for Gamma, Beta part
+        # Gamma, Beta parts
         self.flatten = tf.keras.layers.Flatten()
         self.dense_1 = tf.keras.layers.Dense(4 * first_filters,
                                              use_bias=False, 
@@ -300,7 +299,7 @@ class Generator(tf.keras.layers.Layer):
                                           kernel_regularizer=KERNEL_REG,
                                            name="g_beta")
 
-        # Uesd for Decoder Bottleneck part
+        # Decoder Bottleneck parts
         self.resnet_adalin_block_1 = ResnetAdaLINBlock(4 * first_filters,
                                                        use_bias=False,
                                                        name="g_resnet_adalin_block_1")
@@ -314,7 +313,7 @@ class Generator(tf.keras.layers.Layer):
                                                        use_bias=False,
                                                        name="g_resnet_adalin_block_4")
         
-        # used for Decoder Up-sampling part
+        # Decoder Up-sampling parts
         self.upsample_1 = Upsample(pad=1, 
                                    filters=2 * first_filters, 
                                    kernel_size=3, 
@@ -382,6 +381,101 @@ class Generator(tf.keras.layers.Layer):
         x = tf.keras.layers.Input(shape=(self.img_size, self.img_size, 3))
         model = tf.keras.Model(inputs=[x], outputs=self.call(x), name=self.name)
         return model.summary()
+
+
+class Discriminator(tf.keras.layers.Layer):
+    
+    def __init__(self, is_global, first_filters=64, pad=1, name="discriminator"):
+        super(Discriminator, self).__init__(name=name)
+        self.is_global = is_global
+        self.pad = pad
+        # Encoder Down-sampling parts
+        self.spec_norm_conv_1 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
+                                                            first_filters,
+                                                            kernel_size=4,
+                                                            strides=2,
+                                                            use_bias=True,
+                                                            kernel_initializer=KERNEL_INIT,
+                                                            kernel_regularizer=KERNEL_REG,
+                                                            name="d_conv2d_1"))
+        self.leaky_relu_1 = tf.keras.layers.LeakyReLU(0.2)
+        self.spec_norm_conv_2 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
+                                                            first_filters * 2,
+                                                            kernel_size=4,
+                                                            strides=2,
+                                                            use_bias=True,
+                                                            kernel_initializer=KERNEL_INIT,
+                                                            kernel_regularizer=KERNEL_REG,
+                                                            name="d_conv2d_2"))
+        self.leaky_relu_2 = tf.keras.layers.LeakyReLU(0.2)
+        self.spec_norm_conv_3 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
+                                                            first_filters * 4,
+                                                            kernel_size=4,
+                                                            strides=2,
+                                                            use_bias=True,
+                                                            kernel_initializer=KERNEL_INIT,
+                                                            kernel_regularizer=KERNEL_REG,
+                                                            name="d_conv2d_3"))
+        self.leaky_relu_3 = tf.keras.layers.LeakyReLU(0.2)
+        enc_last_filters = first_filters * 8
+        if self.is_global:
+            self.spec_norm_conv_4 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
+                                                            first_filters * 8,
+                                                            kernel_size=4,
+                                                            strides=2,
+                                                            use_bias=True,
+                                                            kernel_initializer=KERNEL_INIT,
+                                                            kernel_regularizer=KERNEL_REG,
+                                                            name="d_conv2d_4"))
+            self.leaky_relu_4 = tf.keras.layers.LeakyReLU(0.2)
+            self.spec_norm_conv_5 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
+                                                            first_filters * 16,
+                                                            kernel_size=4,
+                                                            strides=2,
+                                                            use_bias=True,
+                                                            kernel_initializer=KERNEL_INIT,
+                                                            kernel_regularizer=KERNEL_REG,
+                                                            name="d_conv2d_5"))
+            self.leaky_relu_5 = tf.keras.layers.LeakyReLU(0.2)
+            enc_last_filters = first_filters * 32
+        self.spec_norm_conv_enc_last = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
+                                                            enc_last_filters,
+                                                            kernel_size=4,
+                                                            strides=1,
+                                                            use_bias=True,
+                                                            kernel_initializer=KERNEL_INIT,
+                                                            kernel_regularizer=KERNEL_REG,
+                                                            name="d_enc_conv2d_last"))
+        self.leaky_relu_enc_last = tf.keras.layers.LeakyReLU(0.2)
+
+
+
+
+
+
+        
+    def call(self, inputs):
+        x = reflection_pad_2d(inputs, self.pad)
+        x = self.spec_norm_conv_1(x)
+        x = self.leaky_relu_1(x)
+        x = reflection_pad_2d(x, self.pad)
+        x = self.spec_norm_conv_2(x)
+        x = self.leaky_relu_2(x)
+        x = reflection_pad_2d(x, self.pad)
+        x = self.spec_norm_conv_3(x)
+        x = self.leaky_relu_3(x)
+        if self.is_global:
+            x = reflection_pad_2d(x, self.pad)
+            x = self.spec_norm_conv_4(x)
+            x = self.leaky_relu_4(x)
+            x = reflection_pad_2d(x, self.pad)
+            x = self.spec_norm_conv_5(x)
+            x = self.leaky_relu_5(x)
+        x = self.spec_norm_conv_enc_last(x)
+        x = self.leaky_relu_enc_last(x)
+
+
+
 
 
 if __name__ == "__main__":
