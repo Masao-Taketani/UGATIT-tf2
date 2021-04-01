@@ -347,12 +347,13 @@ class Generator(tf.keras.layers.Layer):
 
         gap = self.global_avg_pool(x)
         gap_logit = self.gap_fc(gap)
-        gap_weight = self.gap_fc.trainable_variables[0][0]
+        gap_weight = tf.squeeze(self.gap_fc.trainable_variables[0])
+        # [bs, h, w, ch] * [1, 1, 1, ch] (multiply various weights for each channel)
         gap = x * gap_weight
 
         gmp = self.global_max_pool(x)
         gmp_logit = self.gmp_fc(gmp)
-        gmp_weight = self.gmp_fc.trainable_variables[0][0]
+        gmp_weight = tf.squeeze(self.gmp_fc.trainable_variables[0])
         gmp = x * gmp_weight
 
         cam_logit = tf.concat([gap_logit, gmp_logit], axis=1)
@@ -447,6 +448,8 @@ class Discriminator(tf.keras.layers.Layer):
                                                             kernel_regularizer=KERNEL_REG,
                                                             name="d_enc_conv2d_last"))
         self.leaky_relu_enc_last = tf.keras.layers.LeakyReLU(0.2)
+        # CAM of Discriminator parts
+
 
 
 
