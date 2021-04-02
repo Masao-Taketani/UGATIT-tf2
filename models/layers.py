@@ -214,6 +214,69 @@ class LIN(tf.keras.layers.Layer):
 
         return out
 
+class CAM(tf.keras.layers.Layer):
+
+    def __init__(self, filters, is_generator, name="CAM"):
+        super(CAM, self).__init__(name=name)
+        self.global_avg_pool = tf.keras.layers.GlobalAveragePooling2D()
+        self.global_max_pool = tf.keras.layers.GlobalMaxPool2D()
+        if is_generator:
+            self.gap_fc = tf.keras.layers.Dense(units=1, 
+                                                use_bias=False, 
+                                                kernel_initializer=KERNEL_INIT,
+                                                kernel_regularizer=KERNEL_REG,
+                                                name="g_gap_fc")
+            self.gmp_fc = tf.keras.layers.Dense(units=1, 
+                                                use_bias=False, 
+                                                kernel_initializer=KERNEL_INIT,
+                                                kernel_regularizer=KERNEL_REG,
+                                                name="g_gmp_fc")
+            self.activation = tf.keras.layers.ReLU()
+        else:
+            self.gap_fc = tfa.layers.SpectralNormalization(tf.keras.layers.Dense(units=1, 
+                                                use_bias=False, 
+                                                kernel_initializer=KERNEL_INIT,
+                                                kernel_regularizer=KERNEL_REG,
+                                                name="g_gap_fc"))
+            self.gmp_fc = tfa.layers.SpectralNormalization(tf.keras.layers.Dense(units=1, 
+                                                use_bias=False, 
+                                                kernel_initializer=KERNEL_INIT,
+                                                kernel_regularizer=KERNEL_REG,
+                                                name="g_gmp_fc"))
+            self.activation = tf.keras.layers.LeakyReLU(0.2)
+
+        self.conv1x1 = tf.keras.layers.Conv2D(filters=filters,
+                                              kernel_size=1,
+                                              strides=1,
+                                              use_bias=True,
+                                              kernel_initializer=KERNEL_INIT,
+                                              kernel_regularizer=KERNEL_REG,
+                                              name="g_conv1x1")
+
+    def call(self, x):
+        gap = self.global_avg_pool(x)
+        gap_logit = self.gap_fc(gap)
+        gap_weight = tf.squeeze(self.gap_fc.trainable_variables[0])
+        # [bs, h, w, ch] * [ch] (multiply various weights for each channel)
+        gap = x * gap_weight
+
+        gmp = self.global_max_pool(x)
+        gmp_logit = self.gmp_fc(gmp)
+        # [bs, h, w, ch] * [ch] (multiply various weights for each channel)
+        gmp_weight = tf.squeeze(self.gmp_fc.trainable_variables[0])
+        gmp = x * gmp_weight
+
+        cam_logit = tf.concat([gap_logit, gmp_logit], axis=1)
+
+        gap = tf.expand_dims(tf.expand_dims(gap, 2), 3)
+        gmp = tf.expand_dims(tf.expand_dims(gmp, 2), 3)
+        x = tf.concat([gap, gmp], axis=3)
+        x = self.activation(self.conv1x1(x))
+
+        heatmap = tf.math.reduce_sum(x, axis=3, keepdims=True)
+
+        return x, cam_logit, heatmap
+
 
 class Generator(tf.keras.layers.Layer):
 
@@ -255,26 +318,7 @@ class Generator(tf.keras.layers.Layer):
                                           name="g_resnet_block_4")
 
         # CAM of Generator parts
-        self.global_avg_pool = tf.keras.layers.GlobalAveragePooling2D()
-        self.global_max_pool = tf.keras.layers.GlobalMaxPool2D()
-        self.gap_fc = tf.keras.layers.Dense(units=1, 
-                                            use_bias=False, 
-                                            kernel_initializer=KERNEL_INIT,
-                                            kernel_regularizer=KERNEL_REG,
-                                            name="g_gap_fc")
-        self.gmp_fc = tf.keras.layers.Dense(units=1, 
-                                            use_bias=False, 
-                                            kernel_initializer=KERNEL_INIT,
-                                            kernel_regularizer=KERNEL_REG,
-                                            name="g_gmp_fc")
-        self.conv1x1 = tf.keras.layers.Conv2D(filters=4 * first_filters,
-                                              kernel_size=1,
-                                              strides=1,
-                                              use_bias=True,
-                                              kernel_initializer=KERNEL_INIT,
-                                              kernel_regularizer=KERNEL_REG,
-                                              name="g_conv1x1")
-        self.relu_1 = tf.keras.layers.ReLU()
+        self.cam = CAM(4 * first_filters, is_generator=True, name="g_CAM")
 
         # Gamma, Beta parts
         self.flatten = tf.keras.layers.Flatten()
@@ -345,22 +389,8 @@ class Generator(tf.keras.layers.Layer):
         x = self.resnet_block_3(x)
         x = self.resnet_block_4(x)
 
-        gap = self.global_avg_pool(x)
-        gap_logit = self.gap_fc(gap)
-        gap_weight = tf.squeeze(self.gap_fc.trainable_variables[0])
-        # [bs, h, w, ch] * [1, 1, 1, ch] (multiply various weights for each channel)
-        gap = x * gap_weight
-
-        gmp = self.global_max_pool(x)
-        gmp_logit = self.gmp_fc(gmp)
-        gmp_weight = tf.squeeze(self.gmp_fc.trainable_variables[0])
-        gmp = x * gmp_weight
-
-        cam_logit = tf.concat([gap_logit, gmp_logit], axis=1)
-        x = tf.concat([gap, gmp], axis=3)
-        x = self.relu_1(self.conv1x1(x))
-
-        heatmap = tf.math.reduce_sum(x, axis=3, keepdims=True)
+        x, cam_logit, heatmap = self.cam(x)
+        
         x_ = self.dense_1(self.flatten(x))
         x_ = self.relu_2(x_)
         x_ = self.dense_2(x_)
