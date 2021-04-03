@@ -23,25 +23,37 @@ class Downsample(tf.keras.layers.Layer):
                  filters, 
                  kernel_size, 
                  strides, 
-                 use_bias, 
+                 use_bias,
+                 is_generator,
+                 act="lk_relu",
                  name="downsample"):
         super(Downsample, self).__init__(name=name)
-
         self.pad = pad
-        self.conv2d = tf.keras.layers.Conv2D(filters=filters, 
-                                             kernel_size=kernel_size, 
-                                             strides=strides, 
-                                             use_bias=use_bias, 
-                                             kernel_initializer=KERNEL_INIT,
-                                             kernel_regularizer=KERNEL_REG)
-        self.instance_norm = tfa.layers.InstanceNormalization()
-        self.relu = tf.keras.layers.ReLU()
+        self.act = act
+        self.is_generator = is_generator
+        conv = tf.keras.layers.Conv2D(filters=filters, 
+                                      kernel_size=kernel_size, 
+                                      strides=strides, 
+                                      use_bias=use_bias, 
+                                      kernel_initializer=KERNEL_INIT,
+                                      kernel_regularizer=KERNEL_REG)
+
+        if self.is_generator:
+            self.conv2d = conv
+            self.layer_norm = tfa.layers.InstanceNormalization()
+            self.activation = tf.keras.layers.ReLU()
+        else:
+            self.conv2d = tfa.layers.SpectralNormalization(conv)
+            if self.act == "lk_relu":
+                self.activation = tf.keras.layers.LeakyReLU(0.2)
 
     def call(self, inputs):
         x = reflection_pad_2d(inputs, self.pad)
         x = self.conv2d(x)
-        x = self.instance_norm(x)
-        x = self.relu(x)
+        if self.is_generator:
+            x = self.layer_norm(x)
+        if self.is_generator or self.act == "lk_relu":
+            x = self.activation(x)
 
         return x
 
@@ -232,18 +244,20 @@ class CAM(tf.keras.layers.Layer):
                                                 kernel_regularizer=KERNEL_REG,
                                                 name="g_gmp_fc")
             self.activation = tf.keras.layers.ReLU()
+            kind = "g"
         else:
             self.gap_fc = tfa.layers.SpectralNormalization(tf.keras.layers.Dense(units=1, 
                                                 use_bias=False, 
                                                 kernel_initializer=KERNEL_INIT,
                                                 kernel_regularizer=KERNEL_REG,
-                                                name="g_gap_fc"))
+                                                name="d_gap_fc"))
             self.gmp_fc = tfa.layers.SpectralNormalization(tf.keras.layers.Dense(units=1, 
                                                 use_bias=False, 
                                                 kernel_initializer=KERNEL_INIT,
                                                 kernel_regularizer=KERNEL_REG,
-                                                name="g_gmp_fc"))
+                                                name="d_gmp_fc"))
             self.activation = tf.keras.layers.LeakyReLU(0.2)
+            kind = "d"
 
         self.conv1x1 = tf.keras.layers.Conv2D(filters=filters,
                                               kernel_size=1,
@@ -251,7 +265,7 @@ class CAM(tf.keras.layers.Layer):
                                               use_bias=True,
                                               kernel_initializer=KERNEL_INIT,
                                               kernel_regularizer=KERNEL_REG,
-                                              name="g_conv1x1")
+                                              name=kind+"_conv1x1")
 
     def call(self, x):
         gap = self.global_avg_pool(x)
@@ -268,8 +282,6 @@ class CAM(tf.keras.layers.Layer):
 
         cam_logit = tf.concat([gap_logit, gmp_logit], axis=1)
 
-        gap = tf.expand_dims(tf.expand_dims(gap, 2), 3)
-        gmp = tf.expand_dims(tf.expand_dims(gmp, 2), 3)
         x = tf.concat([gap, gmp], axis=3)
         x = self.activation(self.conv1x1(x))
 
@@ -283,27 +295,30 @@ class Generator(tf.keras.layers.Layer):
     def __init__(self, first_filters=64, img_size=256, name="generator"):
         super(Generator, self).__init__(name=name)
         self.img_size = img_size
-        # Encoder Down-sampling parts
+        # For Encoder Down-sampling part
         self.downsample_1 = Downsample(pad=3, 
                                        filters=first_filters, 
                                        kernel_size=7, 
                                        strides=1, 
                                        use_bias=False,
+                                       is_generator=True,
                                        name="g_downsample_1")
         self.downsample_2 = Downsample(pad=1,
                                        filters=2 * first_filters,
                                        kernel_size=3,
                                        strides=2,
                                        use_bias=False,
+                                       is_generator=True,
                                        name="g_downsample_2")
         self.downsample_3 = Downsample(pad=1,
                                        filters=4 * first_filters,
                                        kernel_size=3,
                                        strides=2,
                                        use_bias=False,
+                                       is_generator=True,
                                        name="g_downsample_3")
 
-        # Encoder Bottleneck parts
+        # For Encoder Bottleneck part
         self.resnet_block_1 = ResnetBlock(4 * first_filters,
                                           use_bias=False,
                                           name="g_resnet_block_1")
@@ -317,10 +332,10 @@ class Generator(tf.keras.layers.Layer):
                                           use_bias=False,
                                           name="g_resnet_block_4")
 
-        # CAM of Generator parts
+        # For CAM of Generator part
         self.cam = CAM(4 * first_filters, is_generator=True, name="g_CAM")
 
-        # Gamma, Beta parts
+        # For Gamma, Beta part
         self.flatten = tf.keras.layers.Flatten()
         self.dense_1 = tf.keras.layers.Dense(4 * first_filters,
                                              use_bias=False, 
@@ -341,9 +356,9 @@ class Generator(tf.keras.layers.Layer):
                                           use_bias=False, 
                                           kernel_initializer=KERNEL_INIT,
                                           kernel_regularizer=KERNEL_REG,
-                                           name="g_beta")
+                                          name="g_beta")
 
-        # Decoder Bottleneck parts
+        # For Decoder Bottleneck part
         self.resnet_adalin_block_1 = ResnetAdaLINBlock(4 * first_filters,
                                                        use_bias=False,
                                                        name="g_resnet_adalin_block_1")
@@ -357,7 +372,7 @@ class Generator(tf.keras.layers.Layer):
                                                        use_bias=False,
                                                        name="g_resnet_adalin_block_4")
         
-        # Decoder Up-sampling parts
+        # For Decoder Up-sampling part
         self.upsample_1 = Upsample(pad=1, 
                                    filters=2 * first_filters, 
                                    kernel_size=3, 
@@ -416,101 +431,102 @@ class Generator(tf.keras.layers.Layer):
 
 class Discriminator(tf.keras.layers.Layer):
     
-    def __init__(self, is_global, first_filters=64, pad=1, name="discriminator"):
+    def __init__(self, is_global, first_filters=64, pad=1, img_size=256, name="discriminator"):
         super(Discriminator, self).__init__(name=name)
         self.is_global = is_global
-        self.pad = pad
-        # Encoder Down-sampling parts
-        self.spec_norm_conv_1 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
-                                                            first_filters,
-                                                            kernel_size=4,
-                                                            strides=2,
-                                                            use_bias=True,
-                                                            kernel_initializer=KERNEL_INIT,
-                                                            kernel_regularizer=KERNEL_REG,
-                                                            name="d_conv2d_1"))
-        self.leaky_relu_1 = tf.keras.layers.LeakyReLU(0.2)
-        self.spec_norm_conv_2 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
-                                                            first_filters * 2,
-                                                            kernel_size=4,
-                                                            strides=2,
-                                                            use_bias=True,
-                                                            kernel_initializer=KERNEL_INIT,
-                                                            kernel_regularizer=KERNEL_REG,
-                                                            name="d_conv2d_2"))
-        self.leaky_relu_2 = tf.keras.layers.LeakyReLU(0.2)
-        self.spec_norm_conv_3 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
-                                                            first_filters * 4,
-                                                            kernel_size=4,
-                                                            strides=2,
-                                                            use_bias=True,
-                                                            kernel_initializer=KERNEL_INIT,
-                                                            kernel_regularizer=KERNEL_REG,
-                                                            name="d_conv2d_3"))
-        self.leaky_relu_3 = tf.keras.layers.LeakyReLU(0.2)
+        self.img_size = img_size
+        # For Encoder Down-sampling part
+        self.downsample_1 = Downsample(pad=pad, 
+                                       filters=first_filters,
+                                       kernel_size=4,
+                                       strides=2,
+                                       use_bias=True,
+                                       is_generator=False,
+                                       name="d_downsample_1")
+        self.downsample_2 = Downsample(pad=pad, 
+                                       filters=first_filters * 2,
+                                       kernel_size=4,
+                                       strides=2,
+                                       use_bias=True,
+                                       is_generator=False,
+                                       name="d_downsample_2")
+        self.downsample_3 = Downsample(pad=pad, 
+                                       filters=first_filters * 4,
+                                       kernel_size=4,
+                                       strides=2,
+                                       use_bias=True,
+                                       is_generator=False,
+                                       name="d_downsamle_3")
         enc_last_filters = first_filters * 8
+
         if self.is_global:
-            self.spec_norm_conv_4 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
-                                                            first_filters * 8,
-                                                            kernel_size=4,
-                                                            strides=2,
-                                                            use_bias=True,
-                                                            kernel_initializer=KERNEL_INIT,
-                                                            kernel_regularizer=KERNEL_REG,
-                                                            name="d_conv2d_4"))
-            self.leaky_relu_4 = tf.keras.layers.LeakyReLU(0.2)
-            self.spec_norm_conv_5 = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
-                                                            first_filters * 16,
-                                                            kernel_size=4,
-                                                            strides=2,
-                                                            use_bias=True,
-                                                            kernel_initializer=KERNEL_INIT,
-                                                            kernel_regularizer=KERNEL_REG,
-                                                            name="d_conv2d_5"))
-            self.leaky_relu_5 = tf.keras.layers.LeakyReLU(0.2)
+            self.downsample_4 = Downsample(pad=pad, 
+                                           filters=first_filters * 8,
+                                           kernel_size=4,
+                                           strides=2,
+                                           use_bias=True,
+                                           is_generator=False,
+                                           name="d_conv2d_4")
+            self.downsample_5 = Downsample(pad=pad, 
+                                           filters=first_filters * 16,
+                                           kernel_size=4,
+                                           strides=2,
+                                           use_bias=True,
+                                           is_generator=False,
+                                           name="d_conv2d_5")
             enc_last_filters = first_filters * 32
-        self.spec_norm_conv_enc_last = tfa.layers.SpectralNormalization(tf.keras.layers.Conv2D(
-                                                            enc_last_filters,
-                                                            kernel_size=4,
-                                                            strides=1,
-                                                            use_bias=True,
-                                                            kernel_initializer=KERNEL_INIT,
-                                                            kernel_regularizer=KERNEL_REG,
-                                                            name="d_enc_conv2d_last"))
-        self.leaky_relu_enc_last = tf.keras.layers.LeakyReLU(0.2)
-        # CAM of Discriminator parts
 
+        self.downsample_last = Downsample(pad=pad, 
+                                          filters=enc_last_filters,
+                                          kernel_size=3,
+                                          strides=1,
+                                          use_bias=True,
+                                          is_generator=False,
+                                          name="d_downsample_last")
+        # For Discriminator part
+        self.cam = CAM(enc_last_filters, is_generator=False, name="d_CAM")
 
-
-
-
-
-
+        # For Classifier part
+        self.classifier = Downsample(pad=pad, 
+                                     filters=1, 
+                                     kernel_size=3, 
+                                     strides=1, 
+                                     use_bias=False,
+                                     is_generator=False,
+                                     act="",
+                                     name="classifier")
         
     def call(self, inputs):
-        x = reflection_pad_2d(inputs, self.pad)
-        x = self.spec_norm_conv_1(x)
-        x = self.leaky_relu_1(x)
-        x = reflection_pad_2d(x, self.pad)
-        x = self.spec_norm_conv_2(x)
-        x = self.leaky_relu_2(x)
-        x = reflection_pad_2d(x, self.pad)
-        x = self.spec_norm_conv_3(x)
-        x = self.leaky_relu_3(x)
+        x = self.downsample_1(inputs)
+        x = self.downsample_2(x)
+        x = self.downsample_3(x)
         if self.is_global:
-            x = reflection_pad_2d(x, self.pad)
-            x = self.spec_norm_conv_4(x)
-            x = self.leaky_relu_4(x)
-            x = reflection_pad_2d(x, self.pad)
-            x = self.spec_norm_conv_5(x)
-            x = self.leaky_relu_5(x)
-        x = self.spec_norm_conv_enc_last(x)
-        x = self.leaky_relu_enc_last(x)
+            x = self.downsample_4(x)
+            x = self.downsample_5(x)
+        x = self.downsample_last(x)
+
+        x, cam_logit, heatmap = self.cam(x)
+
+        out = self.classifier(x)
+
+        return out, cam_logit, heatmap
+
+    def summary(self):
+        x = tf.keras.layers.Input(shape=(self.img_size, self.img_size, 3))
+        model = tf.keras.Model(inputs=[x], outputs=self.call(x), name=self.name)
+        return model.summary()
 
 
-
+def build_models():
+    gen = Generator()
+    local_disc = Discriminator(is_global=False, name="local_discriminator")
+    global_disc = Discriminator(is_global=True, name="global_discriminator")
+    print(gen.summary())
+    print(local_disc.summary())
+    print(global_disc.summary())
+    
+    return gen, local_disc, global_disc
 
 
 if __name__ == "__main__":
-    test_generator = Generator()
-    test_generator.summary()
+    gen_test, local_disc_test, global_disc_test = build_models()
