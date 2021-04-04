@@ -1,15 +1,17 @@
-
+import os
 
 from absl import app
 from absl import flags
 
 import tensorflow as tf
 
+from models.UGATIT import UGATIT
+
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer("epochs", 100, "number of epochs to train")
-flags.DEFINE_integer("iterations", 10000, "number of iterations to train")
+flags.DEFINE_integer("num_epochs", 100, "number of epochs to train")
+flags.DEFINE_integer("num_iters", 10000, "number of iterations to train")
 flags.DEFINE_integer("batch_size", 1, "batch size used to train")
 flags.DEFINE_integer("decay_epoch", 50, "epoch that starts decaying the learning rate")
 flags.DEFINE_float("lr", 0.0001, "learning rate to train")
@@ -33,6 +35,8 @@ def main(argv):
     os.makedirs(FLAGS.ckpt_dir, exist_ok=True)
     os.makedirs(FLAGS.eval_dir, exist_ok=True)
     os.makedirs(FLAGS.logdir, exist_ok=True)
+
+    UGATIT(FLAGS)
     
     
 
