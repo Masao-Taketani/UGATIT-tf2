@@ -176,19 +176,27 @@ class AdaLIN(tf.keras.layers.Layer):
     def __init__(self, dim, init_val, name="adalin"):
         super(AdaLIN, self).__init__(name=name)
         self.epsilon = 1e-5
-        self.rho = tf.Variable(initial_value=init_val, 
+        self.rho = tf.Variable(initial_value=tf.constant(init_val, shape=[dim]), 
                                trainable=True, 
                                name="rho", 
                                constraint=lambda v: tf.clip_by_value(v, 
                                                                      clip_value_min=0.0, 
-                                                                     clip_value_max=1.0),)
-                               #shape=dim)
+                                                                     clip_value_max=1.0))
 
     def call(self, inputs, gamma, beta):
+        """[Instance Normalization part]
+        calcuate mean and variance for each channel of for each batch
+        shape of mean and variance: [bs, h, w, ch] -> [bs, 1, 1, ch]
+        """
         in_mean, in_var = tf.nn.moments(inputs, axes=[1, 2], keepdims=True)
         in_out = (inputs - in_mean) / tf.sqrt(in_var + self.epsilon)
+        """[Layer Normalization part]
+        calcuate mean and variance for each image of for each batch
+        shape of mean and variance: [bs, h, w, ch] -> [bs, 1, 1, 1]
+        """
         ln_mean, ln_var = tf.nn.moments(inputs, axes=[1, 2, 3], keepdims=True)
         ln_out = (inputs - ln_mean) / tf.sqrt(ln_var + self.epsilon)
+        # [ch] * [bs, 1, 1, ch] + [ch] * [bs, 1, 1, 1] -> [bs, 1, 1, ch]
         out = self.rho * in_out + (1 - self.rho) * ln_out
         out = out * gamma + beta
 
@@ -200,26 +208,25 @@ class LIN(tf.keras.layers.Layer):
     def __init__(self, dim, name="lin"):
         super(LIN, self).__init__(name=name)
         self.epsilon = 1e-5
-        self.rho = tf.Variable(initial_value=0.0, 
+        self.rho = tf.Variable(initial_value=tf.zeros(dim), 
                                trainable=True, 
                                name="rho", 
                                constraint=lambda v: tf.clip_by_value(v, 
                                                                      clip_value_min=0.0, 
-                                                                     clip_value_max=1.0),)
-                               #shape=dim)
-        self.gamma = tf.Variable(initial_value=1.0, 
+                                                                     clip_value_max=1.0))
+        self.gamma = tf.Variable(initial_value=tf.ones(dim), 
                                  trainable=True, 
-                                 name="gamma",)
-                                 #shape=dim)
-        self.beta = tf.Variable(initial_value=0.0, 
+                                 name="gamma")
+        self.beta = tf.Variable(initial_value=tf.zeros(dim), 
                                  trainable=True, 
-                                 name="beta",) 
-                                 #shape=dim)
+                                 name="beta") 
 
     def call(self, inputs):
-        in_mean, in_var = tf.nn.moments(inputs, axes=[1, 2], keepdims=True) # shape [N, 1, 1, C]
+        # [bs, h, w, ch] -> [bs, 1, 1, ch]
+        in_mean, in_var = tf.nn.moments(inputs, axes=[1, 2], keepdims=True)
         in_out = (inputs - in_mean) / tf.sqrt(in_var + self.epsilon)
-        ln_mean, ln_var = tf.nn.moments(inputs, axes=[1, 2, 3], keepdims=True) # shape [N, 1, 1, 1]
+        # bs, h, w, ch] -> [bs, 1, 1, 1]
+        ln_mean, ln_var = tf.nn.moments(inputs, axes=[1, 2, 3], keepdims=True)
         ln_out = (inputs - ln_mean) / tf.sqrt(ln_var + self.epsilon)
         out = self.rho * in_out + (1 - self.rho) * ln_out
         out = out * self.gamma + self.beta
@@ -268,8 +275,11 @@ class CAM(tf.keras.layers.Layer):
                                               name=kind+"_conv1x1")
 
     def call(self, x):
+        # [bs, h, w, ch] -> [bs, ch]
         gap = self.global_avg_pool(x)
+        # [bs, ch] -> [bs, 1]
         gap_logit = self.gap_fc(gap)
+        # [ch, 1] -> [ch]
         gap_weight = tf.squeeze(self.gap_fc.trainable_variables[0])
         # [bs, h, w, ch] * [ch] (multiply various weights for each channel)
         gap = x * gap_weight
@@ -279,12 +289,12 @@ class CAM(tf.keras.layers.Layer):
         # [bs, h, w, ch] * [ch] (multiply various weights for each channel)
         gmp_weight = tf.squeeze(self.gmp_fc.trainable_variables[0])
         gmp = x * gmp_weight
-
+        # gap_logit: [bs, 1], gmp_logit: [bs, 1] -> [bs, 2]
         cam_logit = tf.concat([gap_logit, gmp_logit], axis=1)
 
         x = tf.concat([gap, gmp], axis=3)
         x = self.activation(self.conv1x1(x))
-
+        # [bs, h, w, ch] -> [bs, h, w, 1]
         heatmap = tf.math.reduce_sum(x, axis=3, keepdims=True)
 
         return x, cam_logit, heatmap
@@ -341,12 +351,12 @@ class Generator(tf.keras.layers.Layer):
                                              use_bias=False, 
                                              kernel_initializer=KERNEL_INIT,
                                              kernel_regularizer=KERNEL_REG)
-        self.relu_2 = tf.keras.layers.ReLU()
+        self.relu_1 = tf.keras.layers.ReLU()
         self.dense_2 = tf.keras.layers.Dense(4 * first_filters,
                                              use_bias=False, 
                                              kernel_initializer=KERNEL_INIT,
                                              kernel_regularizer=KERNEL_REG)
-        self.relu_3 = tf.keras.layers.ReLU()
+        self.relu_2 = tf.keras.layers.ReLU()
         self.gamma = tf.keras.layers.Dense(4 * first_filters,
                                            use_bias=False, 
                                            kernel_initializer=KERNEL_INIT,
@@ -407,9 +417,9 @@ class Generator(tf.keras.layers.Layer):
         x, cam_logit, heatmap = self.cam(x)
         
         x_ = self.dense_1(self.flatten(x))
-        x_ = self.relu_2(x_)
+        x_ = self.relu_1(x_)
         x_ = self.dense_2(x_)
-        x_ = self.relu_3(x_)
+        x_ = self.relu_2(x_)
         gamma, beta = self.gamma(x_), self.beta(x_)
 
         x = self.resnet_adalin_block_1(x, gamma, beta)
