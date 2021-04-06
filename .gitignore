@@ -6,3 +6,7 @@ data/
 ckpts/
 logs/
 test_results/
+testA
+testB
+trainA
+trainB
