@@ -10,10 +10,10 @@ from models.UGATIT import UGATIT
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer("num_epochs", 100, "number of epochs to train")
-flags.DEFINE_integer("num_iters", 10000, "number of iterations to train")
+#flags.DEFINE_integer("num_epochs", 100, "number of epochs to train")
+flags.DEFINE_integer("num_iters", 1000000, "number of iterations to train")
 flags.DEFINE_integer("batch_size", 1, "batch size used to train")
-flags.DEFINE_integer("decay_epoch", 50, "epoch that starts decaying the learning rate")
+flags.DEFINE_integer("decay_iter", 500000, "epoch that starts decaying the learning rate")
 flags.DEFINE_float("lr", 0.0001, "learning rate to train")
 flags.DEFINE_float("lambda_gp", 10.0, "lambda for the gradient penalty")
 flags.DEFINE_float("lambda_adv", 1.0, "lambda for the adversarial loss")
