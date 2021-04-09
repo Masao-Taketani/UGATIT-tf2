@@ -60,7 +60,47 @@ class UGATIT(tf.keras.Model):
             fake_global_B_logit, fake_global_B_cam_logit, _ = self.global_disB(fake_A2B)
             fake_local_B_logit, fake_local_B_cam_logit, _ = self.local_disB(fake_A2B)
 
+            self.calculate_D_avd_losses(real_global_A_logit, 
+                                        fake_global_A_logit,
+                                        real_global_A_cam_logit,
+                                        fake_global_A_cam_logit,
+                                        real_local_A_logit,
+                                        fake_local_A_logit,
+                                        real_local_A_cam_logit,
+                                        fake_local_A_cam_logit,
+                                        real_global_B_logit,
+                                        fake_global_B_logit,
+                                        real_global_B_cam_logit,
+                                        fake_global_B_cam_logit,
+                                        real_local_B_logit,
+                                        fake_local_B_logit,
+                                        real_local_B_cam_logit,
+                                        fake_local_B_cam_logit)
+
+            self.D_A_loss = self.lambda_adv * (self.D_global_A_adv_loss + \
+                                               self.D_global_A_cam_adv_loss + \
+                                               self.D_local_A_adv_loss + \
+                                               self.D_local_A_cam_adv_loss)
+            self.D_B_loss = self.lambda_adv * (self.D_global_B_adv_loss + \
+                                               self.D_global_B_cam_adv_loss + \
+                                               self.D_local_B_adv_loss + \
+                                               self.D_local_B_cam_adv_loss)
+
+            fake_A2B, fake_A2B_cam_logit, _ = self.genA2B(real_A)
+            fake_B2A, fake_B2A_cam_logit, _ = self.genB2A(real_B)
+
+            fake_A2B2A, _, _ = self.genB2A(fake_A2B)
+            fake_B2A2B, _, _ = self.genA2B(fake_B2A)
+
+            fake_A2A, fake_A2A_cam_logit, _ = self.genB2A(real_A)
+            fake_B2B, fake_B2B_cam_logit, _ = self.genA2B(real_B)
             
+            fake_global_A_logit, fake_global_A_cam_logit, _ = self.global_disA(fake_B2A)
+            fake_local_A_logit, fake_local_A_cam_logit, _ = self.local_disA(fake_B2A)
+            fake_global_B_logit, fake_global_B_cam_logit, _ = self.global_disB(fake_A2B)
+            fake_local_B_logit, fake_local_B_cam_logit, _ = self.local_disB(fake_A2B)
+            
+
 
     def calculate_D_avd_losses(self,
                                real_global_A_logit, 
@@ -85,31 +125,31 @@ class UGATIT(tf.keras.Model):
                                    self.MSE_loss(tf.zeros_like(fake_global_A_cam_logit),
                                                  fake_global_A_logit)
         self.D_global_A_cam_adv_loss = self.MSE_loss(tf.ones_like(real_global_A_cam_logit),
-                                                real_global_A_cam_logit) + \
-                                  self.MSE_loss(tf.zeros_like(fake_global_A_cam_logit),
-                                                fake_global_A_cam_logit)
+                                                     real_global_A_cam_logit) + \
+                                       self.MSE_loss(tf.zeros_like(fake_global_A_cam_logit),
+                                                     fake_global_A_cam_logit)
         self.D_local_A_adv_loss = self.MSE_loss(tf.ones_like(real_local_A_logit),
-                                           real_local_A_logit) + \
-                             self.MSE_loss(tf.zeros_like(fake_local_A_logit),
-                                           fake_local_A_logit)
+                                            real_local_A_logit) + \
+                                  self.MSE_loss(tf.zeros_like(fake_local_A_logit),
+                                                fake_local_A_logit)
         self.D_local_A_cam_adv_loss = self.MSE_loss(tf.ones_like(real_local_A_cam_logit),
-                                               real_local_A_cam_logit) + \
-                                 self.MSE_loss(tf.zeros_like(fake_local_A_cam_logit),
-                                               fake_local_A_cam_logit)
+                                                    real_local_A_cam_logit) + \
+                                      self.MSE_loss(tf.zeros_like(fake_local_A_cam_logit),
+                                                    fake_local_A_cam_logit)
         self.D_global_B_adv_loss = self.MSE_loss(tf.ones_like(real_global_B_logit),
-                                            real_global_B_logit) + \
-                              self.MSE_loss(tf.zeros_like(fake_global_B_logit),
-                                            fake_global_B_logit)
+                                                 real_global_B_logit) + \
+                                   self.MSE_loss(tf.zeros_like(fake_global_B_logit),
+                                                 fake_global_B_logit)
         self.D_global_B_cam_adv_loss = self.MSE_loss(tf.ones_like(real_global_B_cam_logit),
-                                                real_global_B_cam_logit) + \
-                                  self.MSE_loss(tf.zeros_like(fake_global_B_cam_logit),
-                                                fake_global_B_cam_logit)
+                                                     real_global_B_cam_logit) + \
+                                       self.MSE_loss(tf.zeros_like(fake_global_B_cam_logit),
+                                                     fake_global_B_cam_logit)
         self.D_local_B_adv_loss = self.MSE_loss(tf.ones_like(real_local_B_logit),
-                                           real_local_B_logit) + \
-                             self.MSE_loss(tf.zeros_like(fake_local_B_logit),
-                                           fake_local_B_logit)
+                                                real_local_B_logit) + \
+                                  self.MSE_loss(tf.zeros_like(fake_local_B_logit),
+                                                fake_local_B_logit)
         self.D_local_B_cam_adv_loss = self.MSE_loss(tf.ones_like(real_local_B_cam_logit),
-                                               real_local_B_cam_logit) + \
-                                 self.MSE_loss(tf.zeros_like(fake_local_B_cam_logit),
-                                               fake_local_B_cam_logit)
+                                                    real_local_B_cam_logit) + \
+                                      self.MSE_loss(tf.zeros_like(fake_local_B_cam_logit),
+                                                    fake_local_B_cam_logit)
         
