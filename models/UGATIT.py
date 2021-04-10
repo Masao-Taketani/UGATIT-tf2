@@ -80,6 +80,12 @@ class UGATIT(tf.keras.Model):
             self.calculate_G_adv_losses()
             self.calculate_G_recon_losses(real_A, real_B, fake_A2B2A, fake_B2A2B)
             self.calculate_G_id_losses(real_A, real_B, fake_A2A, fake_B2B)
+            self.calculate_G_cam_losses(fake_B2A_cam_logit, 
+                                        fake_A2A_cam_logit,
+                                        fake_A2B_cam_logit,
+                                        fake_B2B_cam_logit)
+
+            self.calculate_G_losses()
 
 
 
@@ -135,7 +141,7 @@ class UGATIT(tf.keras.Model):
                                                      self.fake_global_A_cam_logit))
         self.G_local_A_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_logit,
                                                 self.fake_local_A_logit))
-        self.G_local_A_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_cam_logit,
+        self.G_local_A_cam_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_cam_logit,
                                                 self.fake_local_A_cam_logit))
         self.G_global_B_adv_loss = self.MSE_loss(tf.ones_like(self.fake_global_B_logit),
                                                  self.fake_global_B_logit)
@@ -154,6 +160,34 @@ class UGATIT(tf.keras.Model):
         self.G_A_id_loss = self.L1_loss(real_A, fake_A2A)
         self.G_B_id_loss = self.L1_loss(real_B, fake_B2B)
 
-    def calculate_G_cam_losses(self, ):
-        
+    def calculate_G_cam_losses(self, 
+                               fake_B2A_cam_logit, 
+                               fake_A2A_cam_logit,
+                               fake_A2B_cam_logit,
+                               fake_B2B_cam_logit):
+
+        self.G_A_cam_loss = self.BCE_loss(tf.ones_like(fake_B2A_cam_logit),
+                                          fake_B2A_cam_logit) + \
+                            self.BCE_loss(tf.zeros_like(fake_A2A_cam_logit),
+                                          fake_A2A_cam_logit)
+        self.G_B_cam_loss = self.BCE_loss(tf.ones_like(fake_A2B_cam_logit),
+                                          fake_A2B_cam_logit) + \
+                            self.BCE_loss(tf.zeros_like(fake_B2B_cam_logit),
+                                          fake_B2B_cam_logit)
+
     def calculate_G_losses(self):
+        self.G_A_loss = self.lambda_adv * (self.G_global_A_adv_loss + \
+                                           self.G_global_A_cam_adv_loss + \
+                                           self.G_local_A_adv_loss + \
+                                           self.G_local_A_cam_adv_loss)
+                        + self.lambda_cyc * G_A_recon_loss + \
+                        + self.lambda_id * G_A_id_loss + \
+                        + self.lambda_cam * G_A_cam_loss
+        self.G_B_loss = self.lambda_adv * (self.G_global_B_adv_loss + \
+                                           self.G_global_B_cam_adv_loss + \
+                                           self.G_local_B_adv_loss + \
+                                           self.G_local_B_cam_adv_loss)
+                        + self.lambda_cyc * G_B_recon_loss + \
+                        + self.lambda_id * G_B_id_loss + \
+                        + self.lambda_cam * G_B_cam_loss
+                        
