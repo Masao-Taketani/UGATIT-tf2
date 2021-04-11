@@ -9,11 +9,11 @@ from losses import *
 class UGATIT(tf.keras.Model):
 
     def __init__(self, args):
-        self.num_epochs = args.num_epochs
         self.num_iters = args.num_iters
         self.batch_size = args.batch_size
-        self.decay_epoch = args.decay_epoch
+        self.decay_iter = args.decay_iter
         self.lr = args.lr
+        self.init_lr = args.lr
         self.lambda_gp = args.lambda_gp
         self.lambda_adv = args.lambda_adv
         self.lambda_cyc = args.lambda_cyc
@@ -42,52 +42,109 @@ class UGATIT(tf.keras.Model):
         self.D_optim = tf.keras.optimizers.Adam(self.lr, 0.5, 0.999)
 
     def train(self):
+
+        self.set_checkpoint_manager()
         
         print("training start!")
         start_time = time()
-        iteration = 0
+            
         for real_A, real_B in dataset:
-            fake_A2B, _, _ = self.genA2B(real_A)
-            fake_B2A, _, _ = self.genB2A(real_B)
+            if self.ckpt.iteration < self.num_iters:
+                self.ckpt.iteration.assign_add(1)
 
-            self.real_global_A_logit, self.real_global_A_cam_logit, _ = self.global_disA(real_A)
-            self.real_local_A_logit, self.real_local_A_cam_logit, _ = self.local_disA(real_A)
-            self.real_global_B_logit, self.real_global_B_cam_logit, _ = self.global_disB(real_B)
-            self.real_local_B_logit, self.real_local_B_cam_logit, _ = self.local_disB(real_B)
+                if self.ckpt.iteration > self.decay_iter:
+                    self.update_lr()
 
-            self.fake_global_A_logit, self.fake_global_A_cam_logit, _ = self.global_disA(fake_B2A)
-            self.fake_local_A_logit, self.fake_local_A_cam_logit, _ = self.local_disA(fake_B2A)
-            self.fake_global_B_logit, self.fake_global_B_cam_logit, _ = self.global_disB(fake_A2B)
-            self.fake_local_B_logit, self.fake_local_B_cam_logit, _ = self.local_disB(fake_A2B)
+                with tf.GradientTape() as dis_tape():
+                    fake_A2B, _, _ = self.genA2B(real_A)
+                    fake_B2A, _, _ = self.genB2A(real_B)
 
-            self.calculate_D_avd_losses()
-            self.calculate_D_losses()
+                    self.real_global_A_logit, self.real_global_A_cam_logit, _ = self.global_disA(real_A)
+                    self.real_local_A_logit, self.real_local_A_cam_logit, _ = self.local_disA(real_A)
+                    self.real_global_B_logit, self.real_global_B_cam_logit, _ = self.global_disB(real_B)
+                    self.real_local_B_logit, self.real_local_B_cam_logit, _ = self.local_disB(real_B)
 
-            fake_A2B, fake_A2B_cam_logit, _ = self.genA2B(real_A)
-            fake_B2A, fake_B2A_cam_logit, _ = self.genB2A(real_B)
+                    self.fake_global_A_logit, self.fake_global_A_cam_logit, _ = self.global_disA(fake_B2A)
+                    self.fake_local_A_logit, self.fake_local_A_cam_logit, _ = self.local_disA(fake_B2A)
+                    self.fake_global_B_logit, self.fake_global_B_cam_logit, _ = self.global_disB(fake_A2B)
+                    self.fake_local_B_logit, self.fake_local_B_cam_logit, _ = self.local_disB(fake_A2B)
 
-            fake_A2B2A, _, _ = self.genB2A(fake_A2B)
-            fake_B2A2B, _, _ = self.genA2B(fake_B2A)
+                    self.calculate_D_avd_losses()
+                    self.calculate_D_losses()
 
-            fake_A2A, fake_A2A_cam_logit, _ = self.genB2A(real_A)
-            fake_B2B, fake_B2B_cam_logit, _ = self.genA2B(real_B)
-            
-            self.fake_global_A_logit, self.fake_global_A_cam_logit, _ = self.global_disA(fake_B2A)
-            self.fake_local_A_logit, self.fake_local_A_cam_logit, _ = self.local_disA(fake_B2A)
-            self.fake_global_B_logit, self.fake_global_B_cam_logit, _ = self.global_disB(fake_A2B)
-            self.fake_local_B_logit, self.fake_local_B_cam_logit, _ = self.local_disB(fake_A2B)
-            
-            self.calculate_G_adv_losses()
-            self.calculate_G_recon_losses(real_A, real_B, fake_A2B2A, fake_B2A2B)
-            self.calculate_G_id_losses(real_A, real_B, fake_A2A, fake_B2B)
-            self.calculate_G_cam_losses(fake_B2A_cam_logit, 
-                                        fake_A2A_cam_logit,
-                                        fake_A2B_cam_logit,
-                                        fake_B2B_cam_logit)
+                global_dis_A_grads = dis_tape.gradient(self.D_A_loss, 
+                                                       self.global_disA.trainable_variables)
+                local_dis_A_grads = dis_tape.gradient(self.D_A_loss, 
+                                                      self.local_disA.trainable_variables)
+                global_dis_B_grads = dis_tape.gradient(self.D_B_loss, 
+                                                       self.global_disB.trainable_variables)
+                local_dis_B_grads = dis_tape.gradient(self.D_B_loss, 
+                                                      self.local_disB.trainable_variables)
+                self.D_optim.apply_gradients(zip(global_dis_A_grads, 
+                                                 self.global_disA.trainable_variables))
+                self.D_optim.apply_gradients(zip(local_dis_A_grads,
+                                                 self.local_disA.trainable_variables))
+                self.D_optim.apply_gradients(zip(global_dis_B_grads,
+                                                 self.global_disB.trainable_variables))
+                self.D_optim.apply_gradients(zip(local_dis_B_grads,
+                                                 self.local_disB.trainable_variables))
 
-            self.calculate_G_losses()
+                with tf.GradientTape() as gen_tape():
+                    fake_A2B, fake_A2B_cam_logit, _ = self.genA2B(real_A)
+                    fake_B2A, fake_B2A_cam_logit, _ = self.genB2A(real_B)
 
+                    fake_A2B2A, _, _ = self.genB2A(fake_A2B)
+                    fake_B2A2B, _, _ = self.genA2B(fake_B2A)
 
+                    fake_A2A, fake_A2A_cam_logit, _ = self.genB2A(real_A)
+                    fake_B2B, fake_B2B_cam_logit, _ = self.genA2B(real_B)
+                    
+                    self.fake_global_A_logit, self.fake_global_A_cam_logit, _ = self.global_disA(fake_B2A)
+                    self.fake_local_A_logit, self.fake_local_A_cam_logit, _ = self.local_disA(fake_B2A)
+                    self.fake_global_B_logit, self.fake_global_B_cam_logit, _ = self.global_disB(fake_A2B)
+                    self.fake_local_B_logit, self.fake_local_B_cam_logit, _ = self.local_disB(fake_A2B)
+                    
+                    self.calculate_G_adv_losses()
+                    self.calculate_G_recon_losses(real_A, real_B, fake_A2B2A, fake_B2A2B)
+                    self.calculate_G_id_losses(real_A, real_B, fake_A2A, fake_B2B)
+                    self.calculate_G_cam_losses(fake_B2A_cam_logit, 
+                                                fake_A2A_cam_logit,
+                                                fake_A2B_cam_logit,
+                                                fake_B2B_cam_logit)
+                    self.calculate_G_losses()
+                
+                genA2B_grads = gen_tape.gradient(self.G_B_loss, self.genA2B.trainable_variables)
+                genB2A_grads = gen_tape.gradient(self.G_A_loss, self.genB2A.trainable_variables)
+                self.G_optim.apply_gradients(zip(genA2B_grads, self.genA2B.trainable_variables))
+                self.G_optim.apply_gradients(zip(genB2A_grads, self.genB2A.trainable_variables))
+
+            else:
+                break
+
+        print("training is done!")
+
+    def set_checkpoint_manager(self):
+        self.ckpt = tf.train.Checkpoint(iteration=tf.Variable(0, dtype=tf.int64),
+                                        genA2B=self.genA2B,
+                                        genB2A=self.genB2A,
+                                        global_disA=self.global_disA,
+                                        global_disB=self.global_disB,
+                                        local_disA=self.local_disA, 
+                                        local_disB=self.local_disB,
+                                        G_optim=self.G_optim,
+                                        D_optim=self.D_optim)
+
+        ckpt_manager = tf.train.CheckpointManager(self.ckpt,
+                                                  self.ckpt_dir,
+                                                  max_to_keep=5)
+
+        # If a checkpoint exists, restore the latest checkpoint.
+        if ckpt_manager.latest_checkpoint:
+            ckpt.restore(ckpt_manager.latest_checkpoint)
+            print("Latest checkpoint is restored!")
+
+    def update_lr(self):
+        self.lr = self.init_lr * (self.num_iters - self.ckpt.iteration) / (self.num_iters - self.decay_iter)
 
     def calculate_D_avd_losses(self):
 
