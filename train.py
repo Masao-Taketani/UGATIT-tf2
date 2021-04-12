@@ -23,6 +23,7 @@ flags.DEFINE_float("lambda_cam", 1000.0, "lambda for the CAM loss")
 flags.DEFINE_string("ckpt_dir", "ckpts", "dir to save checkpoints")
 flags.DEFINE_string("eval_dir", "test_results", "dir to save evaluated results")
 flags.DEFINE_string("logdir", "logs/", "dir to save logs")
+flags.DEFINE_string("tfrecord_dir", "./", "dir to load tftrecords")
 
 
 def main(argv):

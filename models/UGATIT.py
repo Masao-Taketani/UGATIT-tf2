@@ -1,3 +1,4 @@
+import os
 from time import time
 
 import tensorflow as tf
@@ -22,6 +23,7 @@ class UGATIT(tf.keras.Model):
         self.ckpt_dir = args.ckpt_dir
         self.eval_dir = args.eval_dir
         self.logdir = args.logdir
+        self.tfrecord_dir = args.tfrecord_dir
 
     def build_model(self):
         """ Define Generators and Discriminators """
@@ -122,6 +124,21 @@ class UGATIT(tf.keras.Model):
                 break
 
         print("training is done!")
+
+    def set_dataset(self):
+        AUTOTUNE = tf.data.experimental.AUTOTUNE
+        train_dir = os.path.join(self.tfrecord_dir, "train")
+        test_dir = os.path.join(self.tfrecord_dir, "test")
+        self.train_dataset = tf.data.Dataset.list_files(os.path.join(train_dir, "*.tfrecord"))
+        self.train_dataset = self.train_dataset.interleave(tf.data.TFRecordDataset,
+                                                           num_parallel_calls=AUTOTUNE,
+                                                           deterministic=False)
+        self.train_dataset = self.train_dataset.map(parse_tfrecord)
+        self.train_dataset = self.train_dataset.map(preprocess_for_training,
+                                                    num_parallel_calls=AUTOTUNE)
+        self.train_dataset = self.train_dataset.batch(batch_size=self.batch_size,
+                                                      drop_remainder=True)
+        self.train_dataset = self.train_dataset.prefetch(buffer_size=AUTOTUNE)
 
     def set_checkpoint_manager(self):
         self.ckpt = tf.train.Checkpoint(iteration=tf.Variable(0, dtype=tf.int64),
