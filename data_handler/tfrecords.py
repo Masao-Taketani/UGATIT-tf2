@@ -1,9 +1,19 @@
 import os
+import sys
 import math
+from glob import glob
 
 from tqdm import tqdm
+from absl import app
+from absl import flags
 
 import tensorflow as tf
+
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("input_dir", "dataset/", "dir path of the input dataset")
+flags.DEFINE_string("output_dir", "dataset/tfrecords", "dir path to output tfrecords")
 
 
 # The following functions can be used to convert a value to a type compatible
@@ -15,40 +25,29 @@ def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def _float_feature(value):
-    """ Returns a float_list from a float / double. """
-    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
-
-
 def _int64_feature(value):
     """ Returns an int64_list from a bool / enum / int / uint. """
     return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 
-def float_feature_list(list_val):
-    features = [tf.train.Feature(
-        float_list=tf.train.FloatList(value=[value]) for val in list_val)]
-    return tf.train.FeatureList(feature=features)
-
-
 def convert_data_to_tfrecords(imgs, num_split, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    print("Start converting data into TFRecords.\n")
+    print("Start converting data into TFRecords for {}.\n".format(out_dir))
     num_data = len(imgs)
     num_per_shard = math.ceil(num_data / num_split)
 
     for shard_id in tqdm(range(num_split)):
         tfr_name = os.path.join(out_dir,
                                 "selfie2anime-{:02d}-of-{:02d}.tfrecord".format(shard_id,
-                                                                                num_split))
-        with tf.io.TFRcordWriter(tfr_name) as writer:
+                                                                                num_split-1))
+        with tf.io.TFRecordWriter(tfr_name) as writer:
             start_idx = shard_id * num_per_shard
             end_idx = min((shard_id + 1) * num_per_shard, num_data)
             for i in range(start_idx, end_idx):
                 example = image_example(imgs[i])
                 writer.write(example.SerializeToString())
     
-    print("Converting data into TFRecords is done!")
+    print("Converting data into TFRecords is done for {}!\n".format(out_dir))
 
 
 def image_example(img_path):
@@ -69,3 +68,25 @@ def image_example(img_path):
     }
 
     return tf.train.Example(features=tf.train.Features(feature=feature))
+
+
+def create_tf_records(input_dir, output_dir):
+    dir_list = glob(os.path.join(input_dir, "*"))
+    assert dir_list != [], "trainA, trainB, testA, testB must be placed before executing the program!"
+    for dpath in dir_list:
+        dname = dpath.split("/")[-1]
+        if dname == "tfrecords":
+            continue
+        to_dir = os.path.join(output_dir, dname)
+        os.makedirs(to_dir, exist_ok=True)
+        img_list = glob(os.path.join(dpath, "*"))
+        convert_data_to_tfrecords(img_list, 1, to_dir)
+
+
+def main(argv):
+    os.makedirs(FLAGS.output_dir, exist_ok=True)
+    create_tf_records(FLAGS.input_dir, FLAGS.output_dir)
+
+
+if __name__ == "__main__":
+    app.run(main)
