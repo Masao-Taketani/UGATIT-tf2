@@ -57,14 +57,18 @@ def image_example(img_path):
     img_string = tf.io.read_file(img_path)
     if "jpg" in ext_lower or "jpeg" in ext_lower:
         height, width, channel = tf.io.decode_jpeg(img_string).shape
+        ext = 0
     elif "png" in ext_lower:
         height, width, channel = tf.io.decode_png(img_string).shape
+        ext = 1
 
     feature = {
         "image": _bytes_feature(img_string),
         "height": _int64_feature(height),
         "width": _int64_feature(width),
-        "channel": _int64_feature(channel)
+        "channel": _int64_feature(channel),
+        # As for ext, 0: "jpg", 1: "png"
+        "ext": _int64_feature(ext)
     }
 
     return tf.train.Example(features=tf.train.Features(feature=feature))
@@ -81,6 +85,38 @@ def create_tf_records(input_dir, output_dir):
         os.makedirs(to_dir, exist_ok=True)
         img_list = glob(os.path.join(dpath, "*"))
         convert_data_to_tfrecords(img_list, 1, to_dir)
+
+
+def parse_tfrecords_test(example_proto):
+    # Parse the input tf.train.Example protocol buffer using the dictionary below
+    image_feature_discription = {
+        "image": tf.io.FixedLenFeature([], tf.string),
+        "height": tf.io.FixedLenFeature([], tf.int64),
+        "width": tf.io.FixedLenFeature([], tf.int64),
+        "channel": tf.io.FixedLenFeature([], tf.int64),
+         "ext": tf.io.FixedLenFeature([], tf.int64)
+    }
+
+    return tf.io.parse_single_example(example_proto, image_feature_discription)
+
+
+def parse_tfrecords(example_proto):
+    # Parse the input tf.train.Example protocol buffer using the dictionary below
+    image_feature_discription = {
+        "image": tf.io.FixedLenFeature([], tf.string),
+        "height": tf.io.FixedLenFeature([], tf.int64),
+        "width": tf.io.FixedLenFeature([], tf.int64),
+        "channel": tf.io.FixedLenFeature([], tf.int64),
+         "ext": tf.io.FixedLenFeature([], tf.int64)
+    }
+
+    image_features =  tf.io.parse_single_example(example_proto, image_feature_discription)
+    if image_features["ext"] == 0:
+        image = tf.io.decode_jpeg(image_features["image"])
+    else:
+        image = tf.io.decode_png(image_features["image"])
+
+    return image
 
 
 def main(argv):

@@ -1,4 +1,5 @@
 * __pycache__*
+*.pyc
 .ipynb_checkpoints
 core.*
 data/
@@ -11,3 +12,4 @@ testB
 trainA
 trainB
 tfrecords
+for_testing/
