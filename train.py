@@ -13,6 +13,7 @@ FLAGS = flags.FLAGS
 #flags.DEFINE_integer("num_epochs", 100, "number of epochs to train")
 flags.DEFINE_integer("num_iters", 1000000, "number of iterations to train")
 flags.DEFINE_integer("batch_size", 1, "batch size used to train")
+flags.DEFINE_integer("img_size", 256, "the size of images used for training")
 flags.DEFINE_integer("decay_iter", 500000, "iteration that starts decaying the learning rate")
 flags.DEFINE_float("lr", 0.0001, "learning rate to train")
 flags.DEFINE_float("lambda_gp", 10.0, "lambda for the gradient penalty")
@@ -23,7 +24,7 @@ flags.DEFINE_float("lambda_cam", 1000.0, "lambda for the CAM loss")
 flags.DEFINE_string("ckpt_dir", "ckpts", "dir to save checkpoints")
 flags.DEFINE_string("eval_dir", "test_results", "dir to save evaluated results")
 flags.DEFINE_string("logdir", "logs/", "dir to save logs")
-flags.DEFINE_string("tfrecord_dir", "./", "dir to load tftrecords")
+flags.DEFINE_string("tfrecord_dir", "dataset/tfrecords/", "dir to load tftrecords")
 
 
 def main(argv):

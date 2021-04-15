@@ -1,10 +1,12 @@
 import os
 from time import time
 
+from tqdm import tqdm
 import tensorflow as tf
 
 from layers import Generator, Discriminator
 from losses import *
+from data_handler.tfrecords import parse_tfrecords
 
 
 class UGATIT(tf.keras.Model):
@@ -12,6 +14,7 @@ class UGATIT(tf.keras.Model):
     def __init__(self, args):
         self.num_iters = args.num_iters
         self.batch_size = args.batch_size
+        self.img_size = args.img_size
         self.decay_iter = args.decay_iter
         self.lr = args.lr
         self.init_lr = args.lr
@@ -44,13 +47,18 @@ class UGATIT(tf.keras.Model):
         self.D_optim = tf.keras.optimizers.Adam(self.lr, 0.5, 0.999)
 
     def train(self):
-
         self.set_checkpoint_manager()
+
+        trainA_dataset = set_train_dataset("trainA")
+        trainB_dataset = set_train_dataset("trainB")
+
+        testA_dataset = set_test_dataset("testA")
+        testB_dataset = set_test_dataset("testB")
         
         print("training start!")
         start_time = time()
             
-        for real_A, real_B in dataset:
+        for real_A, real_B in tqdm(zip(trainA_dataset, trainB_dataset)):
             if self.ckpt.iteration < self.num_iters:
                 self.ckpt.iteration.assign_add(1)
 
@@ -125,21 +133,6 @@ class UGATIT(tf.keras.Model):
 
         print("training is done!")
 
-    def set_dataset(self):
-        AUTOTUNE = tf.data.experimental.AUTOTUNE
-        train_dir = os.path.join(self.tfrecord_dir, "train")
-        test_dir = os.path.join(self.tfrecord_dir, "test")
-        self.train_dataset = tf.data.Dataset.list_files(os.path.join(train_dir, "*.tfrecord"))
-        self.train_dataset = self.train_dataset.interleave(tf.data.TFRecordDataset,
-                                                           num_parallel_calls=AUTOTUNE,
-                                                           deterministic=False)
-        self.train_dataset = self.train_dataset.map(parse_tfrecord)
-        self.train_dataset = self.train_dataset.map(preprocess_for_training,
-                                                    num_parallel_calls=AUTOTUNE)
-        self.train_dataset = self.train_dataset.batch(batch_size=self.batch_size,
-                                                      drop_remainder=True)
-        self.train_dataset = self.train_dataset.prefetch(buffer_size=AUTOTUNE)
-
     def set_checkpoint_manager(self):
         self.ckpt = tf.train.Checkpoint(iteration=tf.Variable(0, dtype=tf.int64),
                                         genA2B=self.genA2B,
@@ -159,6 +152,45 @@ class UGATIT(tf.keras.Model):
         if ckpt_manager.latest_checkpoint:
             ckpt.restore(ckpt_manager.latest_checkpoint)
             print("Latest checkpoint is restored!")
+
+    def set_train_dataset(self, dir_name):
+        AUTOTUNE = tf.data.experimental.AUTOTUNE
+
+        tfr = os.path.join(self.tfrecord_dir, dir_name, "*.tfrecord")
+        train_dataset = tf.data.Dataset.list_files(tfr)
+        train_dataset = train_dataset.interleave(tf.data.TFRecordDataset,
+                                                 num_parallel_calls=AUTOTUNE,
+                                                 deterministic=False)
+        train_dataset = train_dataset.map(parse_tfrecords)
+        train_dataset = train_dataset.map(self.preprocess_for_training,
+                                          num_parallel_calls=AUTOTUNE)
+        train_dataset = train_dataset.batch(batch_size=self.batch_size, drop_remainder=True)
+        train_dataset = train_dataset.prefetch(buffer_sie=AUTOTUNE)
+        return train_dataset
+
+    def set_test_dataset(self, dirname):
+        tfr = os.path.join(self.tfrecord_dir, dir_name, "*.tfrecord")
+        test_dataset = tf.data.Dataset.list_files(tfr)
+        test_dataset = test_dataset.interleave(tf.data.TFRecordDataset,
+                                                 deterministic=True)
+        test_dataset = test_dataset.map(parse_tfrecords)
+        test_dataset = test_dataset.map(self.preprocess_for_testing)
+        test_dataset = test_dataset.batch(batch_size=self.batch_size)
+        return test_dataset
+
+    def preprocess_for_training(self, img):
+        img = img / 255.0
+        img = tf.image.random_flip_left_right(img)
+        img = tf.image.resize(img, [self.img_size + 30, self.img_size + 30])
+        img = tf.image.random_crop(image, size=[self.img_size, self.img_size, 3])
+        img = 2 * img - 1
+        return img
+
+    def preprocess_for_testing(self, img):
+        img = img / 255.0
+        img = tf.image.resize(img, [self.img_size, self.img_size])
+        img = 2 * img - 1
+        return img
 
     def update_lr(self):
         self.lr = self.init_lr * (self.num_iters - self.ckpt.iteration) / (self.num_iters - self.decay_iter)
