@@ -1,11 +1,12 @@
 import os
 from time import time
+import datetime
 
 from tqdm import tqdm
 import tensorflow as tf
 
-from layers import Generator, Discriminator
-from losses import *
+from models.layers import Generator, Discriminator
+from models.losses import *
 from data_handler.tfrecords import parse_tfrecords
 
 
@@ -16,6 +17,9 @@ class UGATIT(tf.keras.Model):
         self.batch_size = args.batch_size
         self.img_size = args.img_size
         self.decay_iter = args.decay_iter
+        self.loss_freq = args.loss_freq
+        self.eval_freq = args.eval_freq
+        self.save_freq = args.save_freq
         self.lr = args.lr
         self.init_lr = args.lr
         self.lambda_gp = args.lambda_gp
@@ -47,6 +51,7 @@ class UGATIT(tf.keras.Model):
         self.D_optim = tf.keras.optimizers.Adam(self.lr, 0.5, 0.999)
 
     def train(self):
+        self.build_model()
         self.set_checkpoint_manager()
 
         trainA_dataset = set_train_dataset("trainA")
@@ -54,6 +59,12 @@ class UGATIT(tf.keras.Model):
 
         testA_dataset = set_test_dataset("testA")
         testB_dataset = set_test_dataset("testB")
+        fixed_testA_list = []
+        fixed_testB_list = []
+        num_eval = 5
+        for a, b in zip(testA_dataset.take(num_eval), testB_dataset.take(num_eval)):
+            fixed_testA_list.append(a)
+            fixed_testB_list.append(b)
         
         print("training start!")
         start_time = time()
@@ -65,7 +76,7 @@ class UGATIT(tf.keras.Model):
                 if self.ckpt.iteration > self.decay_iter:
                     self.update_lr()
 
-                with tf.GradientTape() as dis_tape():
+                with tf.GradientTape() as dis_tape:
                     fake_A2B, _, _ = self.genA2B(real_A)
                     fake_B2A, _, _ = self.genB2A(real_B)
 
@@ -99,7 +110,7 @@ class UGATIT(tf.keras.Model):
                 self.D_optim.apply_gradients(zip(local_dis_B_grads,
                                                  self.local_disB.trainable_variables))
 
-                with tf.GradientTape() as gen_tape():
+                with tf.GradientTape() as gen_tape:
                     fake_A2B, fake_A2B_cam_logit, _ = self.genA2B(real_A)
                     fake_B2A, fake_B2A_cam_logit, _ = self.genB2A(real_B)
 
@@ -127,6 +138,22 @@ class UGATIT(tf.keras.Model):
                 genB2A_grads = gen_tape.gradient(self.G_A_loss, self.genB2A.trainable_variables)
                 self.G_optim.apply_gradients(zip(genA2B_grads, self.genA2B.trainable_variables))
                 self.G_optim.apply_gradients(zip(genB2A_grads, self.genB2A.trainable_variables))
+
+                if self.ckpt.iteration % self.loss_freq == 0:
+                    time = round(time.time() - start_time)
+                    log = f'[{self.ckpt.iteration:,}/{self.num_iters:,} time: {time}]'
+                    print(log)
+                if self.ckpt.iteration % self.eval_freq == 0:
+                    genA_results, genB_results = self.predict_for_eval(fixed_testA_list, fixed_testB_list)
+                    genA_results = (genA_results * 0.5 + 0.5) * 255
+                    genB_results = (genB_results * 0.5 + 0.5) * 255
+                    logdir = os.path.join(self.logdir, datetime.now().strftime("%Y%m%d-%H%M%S"))
+                    # Create a file writer for the log directory
+                    file_writer = tf.summary.create_file_writer(logdir)
+                    # Using the file writer, log the reshaped image.
+                    with file_writer.as_default():
+                        tf.summary.image("Generated A", genA_results, max_outputs=num_eval, step=self.ckpt.iteration)
+                        tf.summary.image("Generated B", genB_results, max_outputs=num_eval, step=self.ckpt.iteration)
 
             else:
                 break
@@ -164,7 +191,8 @@ class UGATIT(tf.keras.Model):
         train_dataset = train_dataset.map(parse_tfrecords)
         train_dataset = train_dataset.map(self.preprocess_for_training,
                                           num_parallel_calls=AUTOTUNE)
-        train_dataset = train_dataset.batch(batch_size=self.batch_size, drop_remainder=True)
+        train_dataset = train_dataset.batch(batch_size=self.batch_size, 
+                                            drop_remainder=True)
         train_dataset = train_dataset.prefetch(buffer_sie=AUTOTUNE)
         return train_dataset
 
@@ -285,15 +313,34 @@ class UGATIT(tf.keras.Model):
         self.G_A_loss = self.lambda_adv * (self.G_global_A_adv_loss + \
                                            self.G_global_A_cam_adv_loss + \
                                            self.G_local_A_adv_loss + \
-                                           self.G_local_A_cam_adv_loss)
-                        + self.lambda_cyc * G_A_recon_loss + \
-                        + self.lambda_id * G_A_id_loss + \
+                                           self.G_local_A_cam_adv_loss) \
+                        + self.lambda_cyc * G_A_recon_loss \
+                        + self.lambda_id * G_A_id_loss \
                         + self.lambda_cam * G_A_cam_loss
         self.G_B_loss = self.lambda_adv * (self.G_global_B_adv_loss + \
                                            self.G_global_B_cam_adv_loss + \
                                            self.G_local_B_adv_loss + \
-                                           self.G_local_B_cam_adv_loss)
-                        + self.lambda_cyc * G_B_recon_loss + \
-                        + self.lambda_id * G_B_id_loss + \
+                                           self.G_local_B_cam_adv_loss) \
+                        + self.lambda_cyc * G_B_recon_loss \
+                        + self.lambda_id * G_B_id_loss \
                         + self.lambda_cam * G_B_cam_loss
-                        
+
+    def predict_for_eval(testA_list, testB_list):
+        genA_results = None
+        genB_results = None
+        for testA, testB in zip(testA_list, testB_list):
+            testA = tf.reshape(testA, [-1, self.img_size, self.img_size, 3])
+            testB = tf.reshape(testB, [-1, self.img_size, self.img_size, 3])
+            B_result = self.genA2B(testA)
+            A_result = self.genB2A(testB)
+            genA_inp_out_concat = tf.concat([testB, A_result], 0)
+            genB_inp_out_concat = tf.concat([testB, A_result], 0)
+            
+            if genA_results is None:
+                genA_results = genA_inp_out_concat
+                genB_results = genB_inp_out_concat
+            else:
+                genA_results = tf.concat([genA_results, genA_inp_out_concat], 0)
+                genB_results = tf.concat([genA_results, genB_inp_out_concat], 0)
+
+        return genA_results, genB_results

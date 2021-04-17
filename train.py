@@ -15,6 +15,9 @@ flags.DEFINE_integer("num_iters", 1000000, "number of iterations to train")
 flags.DEFINE_integer("batch_size", 1, "batch size used to train")
 flags.DEFINE_integer("img_size", 256, "the size of images used for training")
 flags.DEFINE_integer("decay_iter", 500000, "iteration that starts decaying the learning rate")
+flags.DEFINE_integer("loss_freq", 1000, "frequency to print loss log for every specified iterations")
+flags.DEFINE_integer("eval_freq", 50000, "frequency to evaluate for every specified iterations")
+flags.DEFINE_integer("save_freq", 50000, "frequency to save models for every specified iterations")
 flags.DEFINE_float("lr", 0.0001, "learning rate to train")
 flags.DEFINE_float("lambda_gp", 10.0, "lambda for the gradient penalty")
 flags.DEFINE_float("lambda_adv", 1.0, "lambda for the adversarial loss")
@@ -38,12 +41,9 @@ def main(argv):
     os.makedirs(FLAGS.eval_dir, exist_ok=True)
     os.makedirs(FLAGS.logdir, exist_ok=True)
 
-    UGATIT(FLAGS)
+    ugatit = UGATIT(FLAGS)
+    ugatit.train()
     
-    
-
-
-
 
 if __name__ == "__main__":
     app.run(main)

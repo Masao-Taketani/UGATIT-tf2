@@ -1,8 +1,8 @@
 import tensorflow as tf
 
 
- def L1_loss(x_real, x_rec):
-     return tf.reduce_mean(tf.abs(x_real - x_rec))
+def L1_loss(x_real, x_rec):
+    return tf.reduce_mean(tf.abs(x_real - x_rec))
 
 
 def MSE_loss(true, pred):
