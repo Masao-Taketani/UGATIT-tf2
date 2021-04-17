@@ -390,7 +390,7 @@ class Generator(tf.keras.layers.Layer):
                                    use_bias=False,
                                    name="g_upsample_1")
         self.upsample_2 = Upsample(pad=1, 
-                                   filters=2 * first_filters, 
+                                   filters=first_filters, 
                                    kernel_size=3, 
                                    strides=1, 
                                    use_bias=False,
@@ -488,7 +488,7 @@ class Discriminator(tf.keras.layers.Layer):
 
         self.downsample_last = Downsample(pad=pad, 
                                           filters=enc_last_filters,
-                                          kernel_size=3,
+                                          kernel_size=4,
                                           strides=1,
                                           use_bias=True,
                                           is_generator=False,
@@ -499,7 +499,7 @@ class Discriminator(tf.keras.layers.Layer):
         # For Classifier part
         self.classifier = Downsample(pad=pad, 
                                      filters=1, 
-                                     kernel_size=3, 
+                                     kernel_size=4, 
                                      strides=1, 
                                      use_bias=False,
                                      is_generator=False,
