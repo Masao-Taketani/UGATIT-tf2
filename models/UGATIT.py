@@ -33,6 +33,7 @@ class UGATIT(tf.keras.Model):
         self.logdir = args.logdir
         self.tfrecord_dir = args.tfrecord_dir
         self.use_mp = args.use_mp
+        self.use_light = args.use_light
 
     def build_model(self):
         """ Define Generators and Discriminators """

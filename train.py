@@ -29,10 +29,12 @@ flags.DEFINE_string("eval_dir", "test_results", "dir to save evaluated results")
 flags.DEFINE_string("logdir", "logs/", "dir to save logs")
 flags.DEFINE_string("tfrecord_dir", "dataset/tfrecords/", "dir to load tftrecords")
 flags.DEFINE_bool("use_mp", True, "whether to use mixed precision for training")
+flags.DEFINE_bool("use_light", True, "whether to use light version of the generator")
 
 
 def main(argv):
-    tf.keras.mixed_precision.set_global_policy('mixed_float16')
+    if FLAGS.use_mp:
+        tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
     gpus = tf.config.experimental.list_physical_devices('GPU')
     for gpu in gpus:

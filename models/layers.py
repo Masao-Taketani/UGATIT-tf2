@@ -306,10 +306,11 @@ class CAM(tf.keras.layers.Layer):
 
 class Generator(tf.keras.layers.Layer):
 
-    def __init__(self, first_filters=64, img_size=256, use_mp=False, name="generator"):
+    def __init__(self, first_filters=64, img_size=256, use_mp=False, use_light=False, name="generator"):
         super(Generator, self).__init__(name=name)
         self.img_size = img_size
         self.use_mp = use_mp
+        self.use_light = use_light
         # For Encoder Down-sampling part
         self.downsample_1 = Downsample(pad=3, 
                                        filters=first_filters, 
@@ -351,6 +352,8 @@ class Generator(tf.keras.layers.Layer):
         self.cam = CAM(4 * first_filters, is_generator=True, name="g_CAM")
 
         # For Gamma, Beta part
+        if self.use_light:
+            self.gap_light = tf.keras.layers.GlobalAveragePooling2D()
         self.flatten = tf.keras.layers.Flatten()
         self.dense_1 = tf.keras.layers.Dense(4 * first_filters,
                                              use_bias=False, 
@@ -431,7 +434,11 @@ class Generator(tf.keras.layers.Layer):
 
         x, cam_logit, heatmap = self.cam(x)
         
-        x_ = self.dense_1(self.flatten(x))
+        if self.use_light:
+            x_ = self.gap_light(x)
+            x_ = self.dense_1(self.flatten(x_))
+        else:
+            x_ = self.dense_1(self.flatten(x))
         x_ = self.relu_1(x_)
         x_ = self.dense_2(x_)
         x_ = self.relu_2(x_)
@@ -558,9 +565,11 @@ class Discriminator(tf.keras.layers.Layer):
 
 def build_models():
     gen = Generator()
+    gen_light = Generator(use_light=True, name="generator_light")
     local_disc = Discriminator(is_global=False, name="local_discriminator")
     global_disc = Discriminator(is_global=True, name="global_discriminator")
     print(gen.summary())
+    print(gen_light.summary())
     print(local_disc.summary())
     print(global_disc.summary())
     
