@@ -1,5 +1,5 @@
 import os
-from time import time
+import time
 import datetime
 
 from tqdm import tqdm
@@ -12,7 +12,8 @@ from data_handler.tfrecords import parse_tfrecords
 
 class UGATIT(tf.keras.Model):
 
-    def __init__(self, args):
+    def __init__(self, args, name="UGATIT"):
+        super(UGATIT, self).__init__(name=name)
         self.num_iters = args.num_iters
         self.batch_size = args.batch_size
         self.img_size = args.img_size
@@ -31,15 +32,16 @@ class UGATIT(tf.keras.Model):
         self.eval_dir = args.eval_dir
         self.logdir = args.logdir
         self.tfrecord_dir = args.tfrecord_dir
+        self.use_mp = args.use_mp
 
     def build_model(self):
         """ Define Generators and Discriminators """
-        self.genA2B = Generator(name="A2B_generator")
-        self.genB2A = Generator(name="B2A_generator")
-        self.global_disA = Discriminator(is_global=True, name="global_discriminatorA")
-        self.global_disB = Discriminator(is_global=True, name="global_discriminatorB")
-        self.local_disA = Discriminator(is_global=False, name="local_discriminatorA")
-        self.local_disB = Discriminator(is_global=False, name="local_discriminatorB")
+        self.genA2B = Generator(use_mp=self.use_mp, name="A2B_generator")
+        self.genB2A = Generator(use_mp=self.use_mp, name="B2A_generator")
+        self.global_disA = Discriminator(is_global=True, use_mp=self.use_mp, name="global_discriminatorA")
+        self.global_disB = Discriminator(is_global=True, use_mp=self.use_mp, name="global_discriminatorB")
+        self.local_disA = Discriminator(is_global=False, use_mp=self.use_mp, name="local_discriminatorA")
+        self.local_disB = Discriminator(is_global=False, use_mp=self.use_mp, name="local_discriminatorB")
 
         """ Define losses """
         self.L1_loss = L1_loss
@@ -49,16 +51,19 @@ class UGATIT(tf.keras.Model):
         """ Define optimizers """
         self.G_optim = tf.keras.optimizers.Adam(self.lr, 0.5, 0.999)
         self.D_optim = tf.keras.optimizers.Adam(self.lr, 0.5, 0.999)
+        if self.use_mp:
+            self.G_optim = tf.keras.mixed_precision.LossScaleOptimizer(self.G_optim)
+            self.D_optim = tf.keras.mixed_precision.LossScaleOptimizer(self.D_optim)
 
     def train(self):
         self.build_model()
         self.set_checkpoint_manager()
 
-        trainA_dataset = set_train_dataset("trainA")
-        trainB_dataset = set_train_dataset("trainB")
+        trainA_dataset = self.set_train_dataset("trainA")
+        trainB_dataset = self.set_train_dataset("trainB")
 
-        testA_dataset = set_test_dataset("testA")
-        testB_dataset = set_test_dataset("testB")
+        testA_dataset = self.set_test_dataset("testA")
+        testB_dataset = self.set_test_dataset("testB")
         fixed_testA_list = []
         fixed_testB_list = []
         num_eval = 5
@@ -66,8 +71,8 @@ class UGATIT(tf.keras.Model):
             fixed_testA_list.append(a)
             fixed_testB_list.append(b)
         
-        print("training start!")
-        start_time = time()
+        print("Starts training!")
+        start_time = time.time()
             
         for real_A, real_B in tqdm(zip(trainA_dataset, trainB_dataset)):
             if self.ckpt.iteration < self.num_iters:
@@ -76,7 +81,7 @@ class UGATIT(tf.keras.Model):
                 if self.ckpt.iteration > self.decay_iter:
                     self.update_lr()
 
-                with tf.GradientTape() as dis_tape:
+                with tf.GradientTape(persistent=True) as dis_tape:
                     fake_A2B, _, _ = self.genA2B(real_A)
                     fake_B2A, _, _ = self.genB2A(real_B)
 
@@ -110,7 +115,7 @@ class UGATIT(tf.keras.Model):
                 self.D_optim.apply_gradients(zip(local_dis_B_grads,
                                                  self.local_disB.trainable_variables))
 
-                with tf.GradientTape() as gen_tape:
+                with tf.GradientTape(persistent=True) as gen_tape:
                     fake_A2B, fake_A2B_cam_logit, _ = self.genA2B(real_A)
                     fake_B2A, fake_B2A_cam_logit, _ = self.genB2A(real_B)
 
@@ -140,8 +145,8 @@ class UGATIT(tf.keras.Model):
                 self.G_optim.apply_gradients(zip(genB2A_grads, self.genB2A.trainable_variables))
 
                 if self.ckpt.iteration % self.loss_freq == 0:
-                    time = round(time.time() - start_time)
-                    log = f'[{self.ckpt.iteration:,}/{self.num_iters:,} time: {time}]'
+                    time_elapsed = round(time.time() - start_time)
+                    log = f'[{self.ckpt.iteration:,}/{self.num_iters:,} time: {time_elapsed}]'
                     print(log)
                 if self.ckpt.iteration % self.eval_freq == 0:
                     genA_results, genB_results = self.predict_for_eval(fixed_testA_list, fixed_testB_list)
@@ -193,10 +198,10 @@ class UGATIT(tf.keras.Model):
                                           num_parallel_calls=AUTOTUNE)
         train_dataset = train_dataset.batch(batch_size=self.batch_size, 
                                             drop_remainder=True)
-        train_dataset = train_dataset.prefetch(buffer_sie=AUTOTUNE)
+        train_dataset = train_dataset.prefetch(buffer_size=AUTOTUNE)
         return train_dataset
 
-    def set_test_dataset(self, dirname):
+    def set_test_dataset(self, dir_name):
         tfr = os.path.join(self.tfrecord_dir, dir_name, "*.tfrecord")
         test_dataset = tf.data.Dataset.list_files(tfr)
         test_dataset = test_dataset.interleave(tf.data.TFRecordDataset,
@@ -207,14 +212,16 @@ class UGATIT(tf.keras.Model):
         return test_dataset
 
     def preprocess_for_training(self, img):
+        img = tf.cast(img, tf.float32)
         img = img / 255.0
         img = tf.image.random_flip_left_right(img)
         img = tf.image.resize(img, [self.img_size + 30, self.img_size + 30])
-        img = tf.image.random_crop(image, size=[self.img_size, self.img_size, 3])
+        img = tf.image.random_crop(img, size=[self.img_size, self.img_size, 3])
         img = 2 * img - 1
         return img
 
     def preprocess_for_testing(self, img):
+        img = tf.cast(img, tf.float32)
         img = img / 255.0
         img = tf.image.resize(img, [self.img_size, self.img_size])
         img = 2 * img - 1

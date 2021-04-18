@@ -68,6 +68,7 @@ class Upsample(tf.keras.layers.Layer):
                  use_bias,
                  use_upsample_imgs=True,
                  use_relu=True,
+                 use_mp=False,
                  name="upsample"):
         super(Upsample, self).__init__(name=name)
         
@@ -79,7 +80,7 @@ class Upsample(tf.keras.layers.Layer):
                                              use_bias=use_bias, 
                                              kernel_initializer=KERNEL_INIT,
                                              kernel_regularizer=KERNEL_REG)
-        self.lin = LIN(filters)
+        self.lin = LIN(filters, use_mp=use_mp)
         if use_relu:
             self.activation = tf.keras.layers.ReLU()
         else:
@@ -131,9 +132,8 @@ class ResnetBlock(tf.keras.layers.Layer):
 
 class ResnetAdaLINBlock(tf.keras.layers.Layer):
 
-    def __init__(self, dim, use_bias, smoothing=True, name="resnet_adalin_block"):
+    def __init__(self, dim, use_bias, smoothing=True, use_mp=False, name="resnet_adalin_block"):
         super(ResnetAdaLINBlock, self).__init__(name=name)
-
         init_val = 0.9 if smoothing else 1.0
 
         self.conv2d_1 = tf.keras.layers.Conv2D(filters=dim, 
@@ -142,7 +142,7 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
                                                use_bias=use_bias, 
                                                kernel_initializer=KERNEL_INIT,
                                                kernel_regularizer=KERNEL_REG)
-        self.adalin_1 = AdaLIN(dim, init_val)
+        self.adalin_1 = AdaLIN(dim, init_val, use_mp=use_mp)
         self.relu = tf.keras.layers.ReLU()
         self.conv2d_2 = tf.keras.layers.Conv2D(filters=dim, 
                                                kernel_size=3, 
@@ -150,7 +150,7 @@ class ResnetAdaLINBlock(tf.keras.layers.Layer):
                                                use_bias=use_bias, 
                                                kernel_initializer=KERNEL_INIT,
                                                kernel_regularizer=KERNEL_REG)
-        self.adalin_2 = AdaLIN(dim, init_val)
+        self.adalin_2 = AdaLIN(dim, init_val, use_mp=use_mp)
 
     def call(self, inputs, gamma, beta):
         x = reflection_pad_2d(inputs, 1)
@@ -173,12 +173,14 @@ class AdaLIN(tf.keras.layers.Layer):
     [znxlwm/UGATIT-pytorch](https://github.com/znxlwm/UGATIT-pytorch/blob/b8c4251823673189999484d07e97fdcb9300e9e0/networks.py#L157)
     """
 
-    def __init__(self, dim, init_val, name="adalin"):
+    def __init__(self, dim, init_val, use_mp=False, name="adalin"):
         super(AdaLIN, self).__init__(name=name)
         self.epsilon = 1e-5
-        self.rho = tf.Variable(initial_value=tf.constant(init_val, shape=[dim]), 
+        dtype = tf.float16 if use_mp else tf.float32
+
+        self.rho = tf.Variable(initial_value=tf.constant(init_val, shape=[dim], dtype=dtype), 
                                trainable=True, 
-                               name="rho", 
+                               name="rho",
                                constraint=lambda v: tf.clip_by_value(v, 
                                                                      clip_value_min=0.0, 
                                                                      clip_value_max=1.0))
@@ -205,19 +207,21 @@ class AdaLIN(tf.keras.layers.Layer):
 
 class LIN(tf.keras.layers.Layer):
 
-    def __init__(self, dim, name="lin"):
+    def __init__(self, dim, use_mp=False, name="lin"):
         super(LIN, self).__init__(name=name)
         self.epsilon = 1e-5
-        self.rho = tf.Variable(initial_value=tf.zeros(dim), 
+        dtype = tf.float16 if use_mp else tf.float32
+
+        self.rho = tf.Variable(initial_value=tf.zeros(dim, dtype=dtype), 
                                trainable=True, 
                                name="rho", 
                                constraint=lambda v: tf.clip_by_value(v, 
                                                                      clip_value_min=0.0, 
                                                                      clip_value_max=1.0))
-        self.gamma = tf.Variable(initial_value=tf.ones(dim), 
+        self.gamma = tf.Variable(initial_value=tf.ones(dim, dtype=dtype), 
                                  trainable=True, 
                                  name="gamma")
-        self.beta = tf.Variable(initial_value=tf.zeros(dim), 
+        self.beta = tf.Variable(initial_value=tf.zeros(dim, dtype=dtype), 
                                  trainable=True, 
                                  name="beta") 
 
@@ -302,9 +306,10 @@ class CAM(tf.keras.layers.Layer):
 
 class Generator(tf.keras.layers.Layer):
 
-    def __init__(self, first_filters=64, img_size=256, name="generator"):
+    def __init__(self, first_filters=64, img_size=256, use_mp=False, name="generator"):
         super(Generator, self).__init__(name=name)
         self.img_size = img_size
+        self.use_mp = use_mp
         # For Encoder Down-sampling part
         self.downsample_1 = Downsample(pad=3, 
                                        filters=first_filters, 
@@ -371,15 +376,19 @@ class Generator(tf.keras.layers.Layer):
         # For Decoder Bottleneck part
         self.resnet_adalin_block_1 = ResnetAdaLINBlock(4 * first_filters,
                                                        use_bias=False,
+                                                       use_mp=self.use_mp,
                                                        name="g_resnet_adalin_block_1")
         self.resnet_adalin_block_2 = ResnetAdaLINBlock(4 * first_filters,
                                                        use_bias=False,
+                                                       use_mp=self.use_mp,
                                                        name="g_resnet_adalin_block_2")
         self.resnet_adalin_block_3 = ResnetAdaLINBlock(4 * first_filters,
                                                        use_bias=False,
+                                                       use_mp=self.use_mp,
                                                        name="g_resnet_adalin_block_3")
         self.resnet_adalin_block_4 = ResnetAdaLINBlock(4 * first_filters,
                                                        use_bias=False,
+                                                       use_mp=self.use_mp,
                                                        name="g_resnet_adalin_block_4")
         
         # For Decoder Up-sampling part
@@ -388,12 +397,14 @@ class Generator(tf.keras.layers.Layer):
                                    kernel_size=3, 
                                    strides=1, 
                                    use_bias=False,
+                                   use_mp=use_mp,
                                    name="g_upsample_1")
         self.upsample_2 = Upsample(pad=1, 
                                    filters=first_filters, 
                                    kernel_size=3, 
                                    strides=1, 
                                    use_bias=False,
+                                   use_mp=use_mp,
                                    name="g_upsample_2")
         self.upsample_3 = Upsample(pad=3, 
                                    filters=3, 
@@ -402,7 +413,11 @@ class Generator(tf.keras.layers.Layer):
                                    use_bias=False,
                                    use_upsample_imgs=False,
                                    use_relu=False,
+                                   use_mp=use_mp,
                                    name="g_upsample_3")
+        if self.use_mp:
+            # This linear activation is used to make the dtype back to tf.float32 for Mixed Precision
+            self.cast_last_output = tf.keras.layers.Activation("linear", dtype="float32")
 
     def call(self, inputs):
         x = self.downsample_1(inputs)
@@ -431,6 +446,11 @@ class Generator(tf.keras.layers.Layer):
         x = self.upsample_2(x)
         out = self.upsample_3(x)
 
+        if self.use_mp:
+            out = self.cast_last_output(out)
+            cam_logit = self.cast_last_output(cam_logit)
+            heatmap = self.cast_last_output(heatmap)
+
         return out, cam_logit, heatmap
 
     def summary(self):
@@ -441,10 +461,11 @@ class Generator(tf.keras.layers.Layer):
 
 class Discriminator(tf.keras.layers.Layer):
     
-    def __init__(self, is_global, first_filters=64, pad=1, img_size=256, name="discriminator"):
+    def __init__(self, is_global, first_filters=64, pad=1, img_size=256, use_mp=False, name="discriminator"):
         super(Discriminator, self).__init__(name=name)
         self.is_global = is_global
         self.img_size = img_size
+        self.use_mp = use_mp
         # For Encoder Down-sampling part
         self.downsample_1 = Downsample(pad=pad, 
                                        filters=first_filters,
@@ -505,6 +526,9 @@ class Discriminator(tf.keras.layers.Layer):
                                      is_generator=False,
                                      act="",
                                      name="classifier")
+        if self.use_mp:
+            # This linear activation is used to make the dtype back to tf.float32 for Mixed Precision
+            self.cast_last_output = tf.keras.layers.Activation("linear", dtype="float32")
         
     def call(self, inputs):
         x = self.downsample_1(inputs)
@@ -518,6 +542,11 @@ class Discriminator(tf.keras.layers.Layer):
         x, cam_logit, heatmap = self.cam(x)
 
         out = self.classifier(x)
+
+        if self.use_mp:
+            out = self.cast_last_output(out)
+            cam_logit = self.cast_last_output(cam_logit)
+            heatmap = self.cast_last_output(heatmap)
 
         return out, cam_logit, heatmap
 
