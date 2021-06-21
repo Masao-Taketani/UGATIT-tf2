@@ -147,7 +147,7 @@ class UGATIT(tf.keras.Model):
 
                 if self.ckpt.iteration % self.loss_freq == 0:
                     time_elapsed = round(time.time() - start_time)
-                    log = f'[{self.ckpt.iteration:,}/{self.num_iters:,} time: {time_elapsed}]'
+                    log = f'[{self.ckpt.iteration.numpy():,}/{self.num_iters:,} time: {time_elapsed}]'
                     print(log)
                 if self.ckpt.iteration % self.eval_freq == 0:
                     genA_results, genB_results = self.predict_for_eval(fixed_testA_list, fixed_testB_list)
@@ -279,12 +279,12 @@ class UGATIT(tf.keras.Model):
     def calculate_G_adv_losses(self):
         self.G_global_A_adv_loss = self.MSE_loss(tf.ones_like(self.fake_global_A_logit),
                                                  self.fake_global_A_logit)
-        self.G_global_A_cam_adv_loss = self.MSE_loss(tf.ones_like(self.fake_global_A_cam_logit,
-                                                     self.fake_global_A_cam_logit))
-        self.G_local_A_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_logit,
-                                                self.fake_local_A_logit))
-        self.G_local_A_cam_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_cam_logit,
-                                                self.fake_local_A_cam_logit))
+        self.G_global_A_cam_adv_loss = self.MSE_loss(tf.ones_like(self.fake_global_A_cam_logit),
+                                                     self.fake_global_A_cam_logit)
+        self.G_local_A_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_logit),
+                                                self.fake_local_A_logit)
+        self.G_local_A_cam_adv_loss = self.MSE_loss(tf.ones_like(self.fake_local_A_cam_logit),
+                                                self.fake_local_A_cam_logit)
         self.G_global_B_adv_loss = self.MSE_loss(tf.ones_like(self.fake_global_B_logit),
                                                  self.fake_global_B_logit)
         self.G_global_B_cam_adv_loss = self.MSE_loss(tf.ones_like(self.fake_global_B_logit),
@@ -322,18 +322,18 @@ class UGATIT(tf.keras.Model):
                                            self.G_global_A_cam_adv_loss + \
                                            self.G_local_A_adv_loss + \
                                            self.G_local_A_cam_adv_loss) \
-                        + self.lambda_cyc * G_A_recon_loss \
-                        + self.lambda_id * G_A_id_loss \
-                        + self.lambda_cam * G_A_cam_loss
+                        + self.lambda_cyc * self.G_A_recon_loss \
+                        + self.lambda_id * self.G_A_id_loss \
+                        + self.lambda_cam * self.G_A_cam_loss
         self.G_B_loss = self.lambda_adv * (self.G_global_B_adv_loss + \
                                            self.G_global_B_cam_adv_loss + \
                                            self.G_local_B_adv_loss + \
                                            self.G_local_B_cam_adv_loss) \
-                        + self.lambda_cyc * G_B_recon_loss \
-                        + self.lambda_id * G_B_id_loss \
-                        + self.lambda_cam * G_B_cam_loss
+                        + self.lambda_cyc * self.G_B_recon_loss \
+                        + self.lambda_id * self.G_B_id_loss \
+                        + self.lambda_cam * self.G_B_cam_loss
 
-    def predict_for_eval(testA_list, testB_list):
+    def predict_for_eval(self, testA_list, testB_list):
         genA_results = None
         genB_results = None
         for testA, testB in zip(testA_list, testB_list):
