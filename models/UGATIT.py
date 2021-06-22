@@ -149,17 +149,21 @@ class UGATIT(tf.keras.Model):
                     time_elapsed = round(time.time() - start_time)
                     log = f'[{self.ckpt.iteration.numpy():,}/{self.num_iters:,} time: {time_elapsed}]'
                     print(log)
+
                 if self.ckpt.iteration % self.eval_freq == 0:
                     genA_results, genB_results = self.predict_for_eval(fixed_testA_list, fixed_testB_list)
                     genA_results = (genA_results * 0.5 + 0.5) * 255
                     genB_results = (genB_results * 0.5 + 0.5) * 255
-                    logdir = os.path.join(self.logdir, datetime.now().strftime("%Y%m%d-%H%M%S"))
+                    logdir = os.path.join(self.logdir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
                     # Create a file writer for the log directory
                     file_writer = tf.summary.create_file_writer(logdir)
                     # Using the file writer, log the reshaped image.
                     with file_writer.as_default():
                         tf.summary.image("Generated A", genA_results, max_outputs=num_eval, step=self.ckpt.iteration)
                         tf.summary.image("Generated B", genB_results, max_outputs=num_eval, step=self.ckpt.iteration)
+
+                if self.ckpt.iteration % self.save_freq == 0:
+                    self.save()
 
             else:
                 break
@@ -177,13 +181,13 @@ class UGATIT(tf.keras.Model):
                                         G_optim=self.G_optim,
                                         D_optim=self.D_optim)
 
-        ckpt_manager = tf.train.CheckpointManager(self.ckpt,
+        self.ckpt_manager = tf.train.CheckpointManager(self.ckpt,
                                                   self.ckpt_dir,
                                                   max_to_keep=5)
 
         # If a checkpoint exists, restore the latest checkpoint.
-        if ckpt_manager.latest_checkpoint:
-            ckpt.restore(ckpt_manager.latest_checkpoint)
+        if self.ckpt_manager.latest_checkpoint:
+            self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
             print("Latest checkpoint is restored!")
 
     def set_train_dataset(self, dir_name):
@@ -228,8 +232,12 @@ class UGATIT(tf.keras.Model):
         img = 2 * img - 1
         return img
 
-    def update_lr(self):
-        self.lr = self.init_lr * (self.num_iters - self.ckpt.iteration) / (self.num_iters - self.decay_iter)
+    @tf.function
+    def update_lr(self, dtype=tf.float32):
+        float_num_iters = tf.cast(self.num_iters, dtype)
+        float_curr_iter = tf.cast(self.ckpt.iteration, dtype)
+        float_decay_iter = tf.cast(self.decay_iter, dtype)
+        self.lr = self.init_lr * (float_num_iters - float_curr_iter) / (float_num_iters - float_decay_iter)
 
     def calculate_D_avd_losses(self):
 
@@ -339,16 +347,20 @@ class UGATIT(tf.keras.Model):
         for testA, testB in zip(testA_list, testB_list):
             testA = tf.reshape(testA, [-1, self.img_size, self.img_size, 3])
             testB = tf.reshape(testB, [-1, self.img_size, self.img_size, 3])
-            B_result = self.genA2B(testA)
-            A_result = self.genB2A(testB)
+            B_result, _, _ = self.genA2B(testA)
+            A_result, _, _ = self.genB2A(testB)
             genA_inp_out_concat = tf.concat([testB, A_result], 0)
-            genB_inp_out_concat = tf.concat([testB, A_result], 0)
+            genB_inp_out_concat = tf.concat([testA, B_result], 0)
             
             if genA_results is None:
                 genA_results = genA_inp_out_concat
                 genB_results = genB_inp_out_concat
             else:
                 genA_results = tf.concat([genA_results, genA_inp_out_concat], 0)
-                genB_results = tf.concat([genA_results, genB_inp_out_concat], 0)
+                genB_results = tf.concat([genB_results, genB_inp_out_concat], 0)
 
         return genA_results, genB_results
+
+    def save(self):
+        ckpt_save_path = self.ckpt_manager.save()
+        print(f"Saving a checkpoint for iter {self.ckpt.iteration.numpy()} at {ckpt_save_path}")
