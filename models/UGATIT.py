@@ -65,6 +65,7 @@ class UGATIT(tf.keras.Model):
 
         testA_dataset = self.set_test_dataset("testA")
         testB_dataset = self.set_test_dataset("testB")
+        
         fixed_testA_list = []
         fixed_testB_list = []
         num_eval = 5
@@ -76,6 +77,7 @@ class UGATIT(tf.keras.Model):
         start_time = time.time()
             
         for real_A, real_B in tqdm(zip(trainA_dataset, trainB_dataset)):
+            #print("A:", real_A, "B", real_B)
             if self.ckpt.iteration < self.num_iters:
                 self.ckpt.iteration.assign_add(1)
 
@@ -195,6 +197,7 @@ class UGATIT(tf.keras.Model):
 
         tfr = os.path.join(self.tfrecord_dir, dir_name, "*.tfrecord")
         train_dataset = tf.data.Dataset.list_files(tfr)
+        train_dataset = train_dataset.repeat()
         train_dataset = train_dataset.interleave(tf.data.TFRecordDataset,
                                                  num_parallel_calls=AUTOTUNE,
                                                  deterministic=False)
@@ -240,7 +243,6 @@ class UGATIT(tf.keras.Model):
         self.lr = self.init_lr * (float_num_iters - float_curr_iter) / (float_num_iters - float_decay_iter)
 
     def calculate_D_avd_losses(self):
-
         self.D_global_A_adv_loss = self.MSE_loss(tf.ones_like(self.real_global_A_logit), 
                                                  self.real_global_A_logit) + \
                                    self.MSE_loss(tf.zeros_like(self.fake_global_A_cam_logit),
